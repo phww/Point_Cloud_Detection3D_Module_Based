@@ -12,7 +12,7 @@ from kitti.io.kitti_io import KittiIo
 from basic.dataset.preprocess.preprocessor import Preprocessor
 from basic.box_np_ops.anchor2bbox import anchor3d_to_bbox8c
 from basic.box_np_ops.bbox_utils import in_hull
-from pcdet.ops.roiaware_pool3d import roiaware_pool3d_utils
+from basic.ops.pc_3rd_ops.roiaware_pool3d import roiaware_pool3d_utils
 
 
 class KittiPreprocessor(Preprocessor):
