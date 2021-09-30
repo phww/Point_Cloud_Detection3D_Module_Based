@@ -7,8 +7,10 @@
 # @desc :
 from .vfe_base import VFEBase
 from .mean_vfe import MeanVFE
+from .mlp_vfe import MlpVFE
 
 __all__ = {
     'VFEBase': VFEBase,
     'MeanVFE': MeanVFE,
+    'MlpVFE' : MlpVFE,
 }

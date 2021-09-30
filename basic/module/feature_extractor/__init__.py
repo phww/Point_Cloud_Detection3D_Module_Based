@@ -6,6 +6,10 @@
 # @File : __init__.py.py
 # @desc :
 from .point_feature_extractor import *
-from .voxel_feature_extractor.mean_vfe import MeanVFE
+from .voxel_feature_extractor import VFEBase, MlpVFE, MeanVFE
 
-__all__ = ['MeanVFE']
+__all__ = {
+    'VFEBase': VFEBase,
+    'MeanVFE': MeanVFE,
+    'MlpVFE' : MlpVFE
+}
