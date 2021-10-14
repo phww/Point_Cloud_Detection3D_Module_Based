@@ -25,18 +25,20 @@ def _add_size_info(anchors_without_size, sizes):
     sizes = sizes.repeat(tile_size_shape)
     anchors_without_size.insert(3, sizes)
     # gen anchors
-    anchors = torch.cat(anchors_without_size, dim=-1)  # x y z l w h r
+    anchors = torch.cat(anchors_without_size, dim=-1)  # x y z w=dx l=dy h=dz r
     return anchors
 
 
 class AnchorGenerator:
 
-    def __init__(self, model_cfg, model_infos, feature_map_size, class_type='Car', dtype=torch.float32):
+    def __init__(self, anchor_gen_cfg, model_info_dict, class_type='Car',
+                 feature_map_size=None, dtype=torch.float32, **kwargs
+                 ):
         """
         Anchor Generator for one class and feature_map_size.
         Args:
-            model_cfg:(Easydict)
-            model_infos: (dict) extra information for the entire program
+            anchor_gen_cfg:(Easydict)
+            model_info_dict: (dict) extra information for the entire program
             feature_map_size: (torch shape) or (list of int)
                                 D H W for anchor3d H W for anchor2d
             class_type: (str)
@@ -44,9 +46,10 @@ class AnchorGenerator:
             dtype: torch dtype
 
         """
-        anchor_cfgs = model_cfg.MODEL.DENSE_HEAD.ANCHOR_GENERATOR_CONFIG
+        self.anchor_cfgs = anchor_gen_cfg
+        _feature_map_size = model_info_dict['feature_map_size'] if feature_map_size is None else feature_map_size
         self.anchor_cfg = None
-        for cfg in anchor_cfgs:
+        for cfg in self.anchor_cfgs.CLASS_CONFIG:
             if cfg.class_name == class_type:
                 self.anchor_cfg = cfg
                 break
@@ -57,7 +60,7 @@ class AnchorGenerator:
         self.boxes_size = self.anchor_cfg['boxes_size']
         self.ratios = self.anchor_cfg.get('ratios', [1])
         self.rots = self.anchor_cfg.get('rotations', [0])
-        self.feature_map_size = feature_map_size if isinstance(feature_map_size, list) else list(feature_map_size)
+        self.feature_map_size = _feature_map_size if isinstance(_feature_map_size, list) else list(_feature_map_size)
         self.center_aligned = self.anchor_cfg.get('center_aligned', False)
         # if only need anchors on road.anchors z = road_plane_height and z_dim=1
         self.road_plane_aligned = self.anchor_cfg.get('road_plane_aligned', False)
@@ -71,13 +74,13 @@ class AnchorGenerator:
 
         self.mode = self.anchor_cfg['mode']
         # Range Mode needed
-        self.extents_range = model_cfg.get('range', None)
+        self.extents_range = anchor_gen_cfg.get('range', None)
         if self.extents_range is None:  # if don't set stride in cfg,for 3d anchor the range is point cloud cube range
             if self.anchor_dims == 3:
-                self.extents_range = model_cfg.DATASET_CONFIG.POINT_CLOUD_RANGE
+                self.extents_range = model_info_dict['point_cloud_range']
             # for 2d anchor the range is image size [0, 0, H , W]
             else:
-                self.extents_range = model_cfg.DATASET_CONFIG.IMAGE_SIZE_RANGE
+                self.extents_range = model_info_dict['image_size_range']
                 self.extents_range.insert(0, 3)
             # X_len, Y_len, Z_len
             self.extents_len = torch.tensor(self.extents_range, dtype=self.dtype)[self.anchor_dims:] - \
@@ -93,9 +96,10 @@ class AnchorGenerator:
             self.stride = self.extents_len / shape  # x_stride y_stride z_stride/0
 
         # grid_X, grid_Y, grid_Z
-        self.grid_size = model_infos.get('grid_size', None)
-        self.voxel_size = model_infos.get('voxel_size', None)
+        self.grid_size = model_info_dict.get('grid_size', None)
+        self.voxel_size = model_info_dict.get('voxel_size', None)
         #
+        self.device = model_info_dict['device']
         # self.extra_value_names = self.anchor_cfg.get('extra_value_names', None)
         # self._gen_sizes_with_ratios()
 
@@ -113,7 +117,7 @@ class AnchorGenerator:
                 anchors = anchors.view(-1, self.ndim).contiguous()
         else:
             raise ValueError("Unsupported Mode!")
-        return anchors
+        return anchors.to(self.device)
 
     def _gen_sizes_with_ratios(self):
         sizes = np.array(self.boxes_size, dtype=self.dtype)  # N, 3
@@ -149,7 +153,7 @@ class AnchorGenerator:
         rotations = torch.tensor(self.rots, dtype=self.dtype)
         anchors_without_size = list(torch.meshgrid(x_centers, y_centers, z_centers, rotations))
         # put size info to anchors_without_size
-        anchors = _add_size_info(anchors_without_size, sizes)  # x y z h w l r
+        anchors = _add_size_info(anchors_without_size, sizes)  # x y z w=dx l=dy h=dz r
         if self.anchor_dims == 2:
             anchors = anchors[:, :, :, 0, :, 0, :].squeeze()  # x y h w r
         return anchors
@@ -164,16 +168,16 @@ class AnchorGenerator:
             extents_range[3:] = extents_range[3:] - self.stride / 2
 
         x_centers = torch.linspace(
-                extents_range[0], extents_range[3],
-                self.feature_map_size[2], dtype=self.dtype
+            extents_range[0], extents_range[3],
+            self.feature_map_size[2], dtype=self.dtype
         )
         y_centers = torch.linspace(
-                extents_range[1], extents_range[4],
-                self.feature_map_size[1], dtype=self.dtype
+            extents_range[1], extents_range[4],
+            self.feature_map_size[1], dtype=self.dtype
         )
         z_centers = torch.linspace(
-                extents_range[2], extents_range[5],
-                self.feature_map_size[0], dtype=self.dtype
+            extents_range[2], extents_range[5],
+            self.feature_map_size[0], dtype=self.dtype
         )
         if self.road_plane_aligned:
             assert self.feature_map_size[0] == 1, "z_dims should equal to 1"
@@ -182,14 +186,10 @@ class AnchorGenerator:
         rotations = torch.tensor(self.rots, dtype=self.dtype)
         anchors_without_size = list(torch.meshgrid(x_centers, y_centers, z_centers, rotations))
         # put size info to anchors_without_size
-        anchors = _add_size_info(anchors_without_size, sizes)  # x y z h w l r
+        anchors = _add_size_info(anchors_without_size, sizes)  # x y z w=dx l=dy h=dz r
         if self.anchor_dims == 2:
             anchors = anchors[:, :, 0, :, :, 0, :].squeeze()  # x y h w r
         return anchors
-
-    @property
-    def get_anchor_dims(self):
-        return self.anchor_dims
 
     @property
     def num_anchors_per_localization(self):
@@ -201,6 +201,21 @@ class AnchorGenerator:
     @property
     def ndim(self):
         return 7  # + len(self.extra_values)
+
+    @property
+    def shape(self, DHW=False):
+        num_rot = len(self.rots)
+        num_size = len(self.boxes_size)
+        num_ratio = len(self.ratios)
+        shape = []
+        feature_map_size = self.feature_map_size.copy()
+        # DHW -> WHD
+        if not DHW:
+            feature_map_size[0], feature_map_size[2] = feature_map_size[2], feature_map_size[0]
+        shape.extend(feature_map_size)
+        shape.append(num_size)
+        shape.append(num_rot)
+        return shape
 
     # for debug
     def set_mode(self, mode_str):
@@ -221,9 +236,11 @@ class AnchorGenerator:
 
 class MultiClsAnchorGenerator:
 
-    def __init__(self, model_cfg, model_infos, feature_map_size, cls_list, dtype=torch.float32):
-        self.anchor_generator_list = [AnchorGenerator(model_cfg, model_infos, feature_map_size, cls, dtype)
-                                      for cls in cls_list]
+    def __init__(self, anchor_gen_cfg, model_info_dict, feature_map_size=None, cls_list=None, dtype=torch.float32):
+        _feature_map_size = model_info_dict['feature_map_size'] if feature_map_size is None else feature_map_size
+        _cls_list = model_info_dict['class_names'] if cls_list is None else cls_list
+        self.anchor_generator_list = [AnchorGenerator(anchor_gen_cfg, model_info_dict, cls, _feature_map_size, dtype)
+                                      for cls in _cls_list]
 
     def gen_anchors(self, flatten_output=True):
         all_anchors = []

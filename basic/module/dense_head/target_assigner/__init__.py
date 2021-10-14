@@ -5,3 +5,8 @@
 # @Version：V 0.1
 # @File : __init__.py.py
 # @desc :
+from .maxiou_assigner import MaxIouTargetAssigner
+
+__all__ = {
+    "MaxIouTargetAssigner": MaxIouTargetAssigner,
+}

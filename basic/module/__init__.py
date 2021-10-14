@@ -17,6 +17,4 @@ alternative_module_list = [
     'point_head',
     'roi_head'
 ]
-__all__ = [
-    'MeanVFE', 'VoxelBackBone8x', 'VoxelResBackBone8x'
-]
+
