@@ -19,14 +19,14 @@ class MaxIouTargetAssigner(AssignerBase):
         self.cls_list = model_info_dict['class_names']
 
     def assign(self, gts, bboxes, gt_labels, **kwargs):
-
         pos_tuples = []
         neg_tuples = []
+        # batch_size == 1, gts:N,
         if gts.dim() == 2:
             return self.assign_one_batch(gts, bboxes, gt_labels, 0)
         else:
             batch_size = gts.size(0)
-
+            # assign target batch by batch
             for i in range(batch_size):
                 batch_pos_tuples, batch_neg_tuples = self.assign_one_batch(gts[i], bboxes, gt_labels[i], i)
                 if batch_pos_tuples is not None:
@@ -41,9 +41,11 @@ class MaxIouTargetAssigner(AssignerBase):
             #     reg_labels.append(ret['reg_labels'])
             # cls_labels = torch.stack(cls_labels, dim=0).to(self.device)
             # reg_labels = torch.stack(reg_labels, dim=0).to(self.device)
-
-        neg_batch_bbox_id, neg_cls_labels = self.decode_neg_tuples(neg_tuples)
-        pos_batch_bbox_id, pos_cls_labels, reg_labels = self.decode_pos_tuples(pos_tuples, gts, gt_labels)
+        neg_cls_labels = pos_cls_labels = []
+        if pos_tuples is not None:
+            neg_batch_bbox_id, neg_cls_labels = self.decode_neg_tuples(neg_tuples)
+        if neg_tuples is not None:
+            pos_batch_bbox_id, pos_cls_labels, reg_labels = self.decode_pos_tuples(pos_tuples, gts, gt_labels)
         cls_labels = torch.cat([neg_cls_labels, pos_cls_labels])
 
         if self.bbox_encoder is not None:
@@ -84,7 +86,8 @@ class MaxIouTargetAssigner(AssignerBase):
                 cls_ious = ious[gt_mask, :]
                 pos_thr = cls_thr.get('pos_threshold', 0.7)
                 neg_thr = cls_thr.get('neg_threshold', 0.3)
-                cls_pos_tuples, cls_neg_tuples = self.make_batch_gt_bbox_tuples(cls_ious, pos_thr, neg_thr, batch_id)
+                if cls_ious.size(0) > 0:
+                    cls_pos_tuples, cls_neg_tuples = self.make_batch_gt_bbox_tuples(cls_ious, pos_thr, neg_thr, batch_id)
                 if cls_pos_tuples.size(0) > 0:
                     batch_pos_tuples.append(cls_pos_tuples)
                 if cls_neg_tuples.size(0) > 0:
@@ -135,7 +138,6 @@ class MaxIouTargetAssigner(AssignerBase):
 
     def decode_pos_tuples(self, tuples, gts, gt_labels):
         pos_batch_bbox_id = torch.unique(tuples[:, [0, 2]], dim=0).to(self.device)
-        pos_gt_bbox_id = tuples[:, [1, 2]]
         pos_cls_labels = gt_labels[tuples[:, 0], tuples[:, 1] - 1]
         pos_reg_labels = gts[tuples[:, 0], tuples[:, 1] - 1]
         return pos_batch_bbox_id, pos_cls_labels, pos_reg_labels

@@ -14,7 +14,8 @@ class VFEBase(nn.Module):
         super(VFEBase, self).__init__()
         self.module_cfg = module_cfg
 
-    def get_output_feature_dim(self):
+    @property
+    def output_feature_dims(self):
         raise NotImplementedError
 
     def forward(self, **kwargs):

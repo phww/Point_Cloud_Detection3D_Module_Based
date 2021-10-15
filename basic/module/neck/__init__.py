@@ -5,6 +5,8 @@
 # @Version：V 0.1
 # @File : __init__.py.py
 # @desc :
-from .normal_compression import DimCompression
+from .dim_compression import DimCompression
 
-__all__ = [DimCompression]
+__all__ = {
+    'DimCompression':DimCompression
+}

@@ -4,22 +4,23 @@ import torch.nn as nn
 
 
 class BaseBEVBackbone(nn.Module):
-    def __init__(self, model_cfg, input_channels):
+    def __init__(self, module_cfg, model_info_dict):
         super().__init__()
-        self.model_cfg = model_cfg
+        self.module_cfg = module_cfg
+        input_channels = model_info_dict['cur_point_feature_dims']
 
-        if self.model_cfg.get('LAYER_NUMS', None) is not None:
-            assert len(self.model_cfg.LAYER_NUMS) == len(self.model_cfg.LAYER_STRIDES) == len(self.model_cfg.NUM_FILTERS)
-            layer_nums = self.model_cfg.LAYER_NUMS
-            layer_strides = self.model_cfg.LAYER_STRIDES
-            num_filters = self.model_cfg.NUM_FILTERS
+        if self.module_cfg.get('LAYER_NUMS', None) is not None:
+            assert len(self.module_cfg.LAYER_NUMS) == len(self.module_cfg.LAYER_STRIDES) == len(self.module_cfg.NUM_FILTERS)
+            layer_nums = self.module_cfg.LAYER_NUMS
+            layer_strides = self.module_cfg.LAYER_STRIDES
+            num_filters = self.module_cfg.NUM_FILTERS
         else:
             layer_nums = layer_strides = num_filters = []
 
-        if self.model_cfg.get('UPSAMPLE_STRIDES', None) is not None:
-            assert len(self.model_cfg.UPSAMPLE_STRIDES) == len(self.model_cfg.NUM_UPSAMPLE_FILTERS)
-            num_upsample_filters = self.model_cfg.NUM_UPSAMPLE_FILTERS
-            upsample_strides = self.model_cfg.UPSAMPLE_STRIDES
+        if self.module_cfg.get('UPSAMPLE_STRIDES', None) is not None:
+            assert len(self.module_cfg.UPSAMPLE_STRIDES) == len(self.module_cfg.NUM_UPSAMPLE_FILTERS)
+            num_upsample_filters = self.module_cfg.NUM_UPSAMPLE_FILTERS
+            upsample_strides = self.module_cfg.UPSAMPLE_STRIDES
         else:
             upsample_strides = num_upsample_filters = []
 
@@ -110,3 +111,7 @@ class BaseBEVBackbone(nn.Module):
         data_dict['spatial_features_2d'] = x
 
         return data_dict
+
+    @property
+    def output_feature_dims(self):
+        return self.num_bev_features

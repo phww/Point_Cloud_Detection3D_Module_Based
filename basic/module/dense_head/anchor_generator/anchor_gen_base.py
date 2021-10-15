@@ -99,7 +99,7 @@ class AnchorGenerator:
         self.grid_size = model_info_dict.get('grid_size', None)
         self.voxel_size = model_info_dict.get('voxel_size', None)
         #
-        self.device = model_info_dict['device']
+        self.device = anchor_gen_cfg.DEVICE
         # self.extra_value_names = self.anchor_cfg.get('extra_value_names', None)
         # self._gen_sizes_with_ratios()
 

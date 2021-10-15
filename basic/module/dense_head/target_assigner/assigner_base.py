@@ -13,7 +13,7 @@ class AssignerBase:
     def __init__(self, assigner_cfg, model_info_dict,**kwargs):
         self.module_cfg = assigner_cfg
         self.model_info_dict = model_info_dict
-        self.device = model_info_dict['device']
+        self.device = assigner_cfg.DEVICE
         self.iou_calculator = self.build_iou_calculator()
         self.bbox_encoder = self.build_box_encoder()
         self.sampler = self.build_sampler()

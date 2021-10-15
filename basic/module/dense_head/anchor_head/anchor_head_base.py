@@ -14,16 +14,19 @@ from basic import loss
 
 class AnchorHeadBase(nn.Module):
 
-    def __init__(self, model_cfg, model_info_dict):
+    def __init__(self, module_cfg, model_info_dict):
         super(AnchorHeadBase, self).__init__()
-        self.module_cfg = model_cfg.MODEL.DENSE_HEAD
+        self.module_cfg = module_cfg
         self.model_info_dict = model_info_dict.copy()
         self.anchor_generator = self.build_anchor_generator()
         self.target_assigner = self.build_target_assigner()
         self.cls_loss_fn, self.reg_loss_fn = self.build_loss()
         self.cls_layer, self.reg_layer = self.init_input_layer()
 
-    def forward(self, inputs, gts, gt_labels=None, **kwargs):
+    def forward(self, batch_dict, **kwargs):
+        inputs = batch_dict['spatial_features_2d']
+        gts = batch_dict['gt_boxes']
+        gt_labels = batch_dict.get('gt_labels', None)
         # 1.get cls_pred and reg_pred map
         cls_pred = self.cls_layer(inputs)  # B,C*A,H,W
         reg_pred = self.reg_layer(inputs)  # B,7*A,H,W
@@ -44,10 +47,21 @@ class AnchorHeadBase(nn.Module):
         cls_pred_neg = self.pred_map_sampling(cls_pred,
                                               batch_bbox_ids_dict['neg'],
                                               )
-        reg_pred = self.pred_map_sampling(reg_pred,
-                                          batch_bbox_ids_dict['pos'],
-                                          )
-        cls_pred = torch.cat([cls_pred_neg, cls_pred_pos], dim=0)
+        sampled_reg_pred = self.pred_map_sampling(reg_pred,
+                                                  batch_bbox_ids_dict['pos'],
+                                                  )
+        sampled_cls_pred = torch.cat([cls_pred_neg, cls_pred_pos], dim=0)
+        output_dict = {
+            'cls_pred': sampled_cls_pred,
+            'reg_pred': sampled_reg_pred,
+            'target_dict': target_dict
+        }
+        return output_dict
+
+    def calc_loss(self, output_dict):
+        cls_pred = output_dict['cls_pred']
+        reg_pred = output_dict['reg_pred']
+        target_dict = output_dict['target_dict']
         cls_loss = self.cls_loss_fn(cls_pred, target_dict['cls_labels'])
         reg_loss = self.reg_loss_fn(reg_pred, target_dict['reg_labels'])
         weights_dict = self.module_cfg.LOSS_CONFIG.LOSS_WEIGHTS

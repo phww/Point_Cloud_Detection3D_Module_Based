@@ -11,12 +11,13 @@ from .vfe_base import VFEBase
 
 class MeanVFE(VFEBase):
 
-    def __init__(self, module_cfg, **kwargs):
+    def __init__(self, module_cfg, model_info_dict, **kwargs):
         super().__init__(module_cfg=module_cfg)
-        self.num_point_features = kwargs['cur_point_feature_dims']
+        self.model_info_dict = model_info_dict
 
-    def get_output_feature_dim(self):
-        return self.num_point_features
+    @property
+    def output_feature_dims(self):
+        return self.model_info_dict['cur_point_feature_dims']
 
     def forward(self, batch_dict, **kwargs):
         """

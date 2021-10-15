@@ -6,7 +6,7 @@
 # @File : spconv_backbone.py
 # @desc :
 from functools import partial
-
+from .backbone3d_base import VoxelBackBone3D
 import spconv
 import torch.nn as nn
 
@@ -73,18 +73,17 @@ class SparseBasicBlock(spconv.SparseModule):
         return out
 
 
-class VoxelBackBone8x(nn.Module):
+class VoxelBackBone8x(VoxelBackBone3D):
 
-    def __init__(self, model_cfg, **kwargs):
-        super().__init__()
-        self.model_cfg = model_cfg
+    def __init__(self, module_cfg, model_info_dict):
+        super(VoxelBackBone8x, self).__init__(module_cfg, model_info_dict)
+        self.module_cfg = module_cfg
         # BN
         norm_fn = partial(nn.BatchNorm1d, eps=1e-3, momentum=0.01)
 
-        self.sparse_shape = kwargs['grid_size'][::-1] + [1, 0, 0]
-        input_channels = kwargs['cur_point_feature_dims']
+        self.sparse_shape = model_info_dict['grid_size'][::-1] + [1, 0, 0]
         self.conv_input = spconv.SparseSequential(
-                spconv.SubMConv3d(input_channels, 16, 3, padding=1, bias=False, indice_key='subm1'),
+                spconv.SubMConv3d(self.input_channels, 16, 3, padding=1, bias=False, indice_key='subm1'),
                 norm_fn(16),
                 nn.ReLU(),
         )
@@ -117,7 +116,7 @@ class VoxelBackBone8x(nn.Module):
         )
 
         last_pad = 0
-        last_pad = self.model_cfg.get('last_pad', last_pad)
+        last_pad = self.module_cfg.get('last_pad', last_pad)
         self.conv_out = spconv.SparseSequential(
                 # [200, 150, 5] -> [200, 150, 2]
                 spconv.SparseConv3d(64, 128, (3, 1, 1), stride=(2, 1, 1), padding=last_pad,
@@ -126,6 +125,7 @@ class VoxelBackBone8x(nn.Module):
                 norm_fn(128),
                 nn.ReLU(),
         )
+        # some module infos
         self.num_point_features = 128
         self.backbone_channels = {
             'x_conv1': 16,
@@ -133,6 +133,17 @@ class VoxelBackBone8x(nn.Module):
             'x_conv3': 64,
             'x_conv4': 64
         }
+        self.down_sample_rate = module_cfg.DOWN_SAMPLE_RATE
+
+    @property
+    def output_feature_dims(self):
+        return self.num_point_features
+
+    @property
+    def output_feature_size(self):
+        feature_map_size = self.grid_size[::-1] // self.down_sample_rate
+        feature_map_size[0] = 2
+        return feature_map_size
 
     def forward(self, batch_dict):
         """
@@ -192,17 +203,15 @@ class VoxelBackBone8x(nn.Module):
         return batch_dict
 
 
-class VoxelResBackBone8x(nn.Module):
+class VoxelResBackBone8x(VoxelBackBone3D):
 
-    def __init__(self, model_cfg, input_channels, grid_size, **kwargs):
-        super().__init__()
-        self.model_cfg = model_cfg
+    def __init__(self, module_cfg, model_info_dict, **kwargs):
+        super(VoxelResBackBone8x, self).__init__(module_cfg, model_info_dict)
+        self.module_cfg = module_cfg
         norm_fn = partial(nn.BatchNorm1d, eps=1e-3, momentum=0.01)
-
-        self.sparse_shape = grid_size[::-1] + [1, 0, 0]
-
+        self.sparse_shape = self.grid_size[::-1] + [1, 0, 0]
         self.conv_input = spconv.SparseSequential(
-                spconv.SubMConv3d(input_channels, 16, 3, padding=1, bias=False, indice_key='subm1'),
+                spconv.SubMConv3d(self.input_channels, 16, 3, padding=1, bias=False, indice_key='subm1'),
                 norm_fn(16),
                 nn.ReLU(),
         )
@@ -237,7 +246,7 @@ class VoxelResBackBone8x(nn.Module):
         )
 
         last_pad = 0
-        last_pad = self.model_cfg.get('last_pad', last_pad)
+        last_pad = self.module_cfg.get('last_pad', last_pad)
         self.conv_out = spconv.SparseSequential(
                 # [200, 150, 5] -> [200, 150, 2]
                 spconv.SparseConv3d(128, 128, (3, 1, 1), stride=(2, 1, 1), padding=last_pad,
@@ -246,6 +255,7 @@ class VoxelResBackBone8x(nn.Module):
                 norm_fn(128),
                 nn.ReLU(),
         )
+        # some module infos
         self.num_point_features = 128
         self.backbone_channels = {
             'x_conv1': 16,
@@ -253,6 +263,17 @@ class VoxelResBackBone8x(nn.Module):
             'x_conv3': 64,
             'x_conv4': 128
         }
+        self.down_sample_rate = module_cfg.DOWN_SAMPLE_RATE
+
+    @property
+    def output_feature_dims(self):
+        return self.num_point_features
+
+    @property
+    def output_feature_size(self):
+        feature_map_size = self.grid_size // self.down_sample_rate
+        feature_map_size[-1] = 2
+        return feature_map_size
 
     def forward(self, batch_dict):
         """

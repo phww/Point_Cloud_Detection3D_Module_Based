@@ -6,5 +6,7 @@
 # @File : __init__.py.py
 # @desc :
 from .VGG_encoder2FPN_decoder import BEVExtractor
+from .base_bev_backbone import BaseBEVBackbone
 
-__all__ = [BEVExtractor]
+__all__ = {'BEVExtractor': BEVExtractor,
+           'BaseBEVBackbone': BaseBEVBackbone}

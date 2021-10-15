@@ -14,10 +14,13 @@ MODEL:
 
   BACKBONE3D:
     NAME: VoxelBackBone8x
+    DOWN_SAMPLE_RATE: 8
+
 
   NECK:
-    NAME: HeightCompression
-    NUM_BEV_FEATURES: 256
+    NAME: DimCompression
+    DIM: 2 # B, N, D, H, W
+    OUTPUT_FEATURE_DIMS: 256 # 128 * 2
 
   BACKBONE2D:
     NAME: BaseBEVBackbone
@@ -29,7 +32,7 @@ MODEL:
     NUM_UPSAMPLE_FILTERS: [ 256, 256 ]
 
   DENSE_HEAD:
-    NAME: AnchorHeadSingle
+    NAME: AnchorHead
     CLASS_AGNOSTIC: False
 
     USE_DIRECTION_CLASSIFIER: True
@@ -37,65 +40,67 @@ MODEL:
     DIR_LIMIT_OFFSET: 0.0
     NUM_DIR_BINS: 2
 
-    ANCHOR_GENERATOR_CONFIG: [
-      {
-        'class_name': 'Car',
-        'mode': 'Range',
-        'anchor_dims': 3,
-        'boxes_size': [ [ 3.9, 1.6, 1.56 ] ], # W L H
-        'rotations': [ 0, 1.57 ],
-        'ratios': [ 1 ],
-        'center_aligned': true,
-        'road_plane_aligned': true,
-        'road_plane_height': -1.2
-          #        'anchor_bottom_heights': [ -1.78 ],
-          #        'align_center': False,
-          #        'feature_map_stride': 8,
-          #        'matched_threshold': 0.6,
-          #        'unmatched_threshold': 0.45
-      },
-      {
-        'class_name': 'Pedestrian',
-        'mode': 'Range',
-        'anchor_dims': 3,
-        'boxes_size': [ [ 0.8, 0.6, 1.73 ] ], # W L H
-        'rotations': [ 0, 1.57 ],
-        'ratios': [ 1 ],
-        'center_aligned': true,
-        'road_plane_aligned': true,
-        'road_plane_height': -1.2
-          #        'anchor_bottom_heights': [ -0.6 ]
-          #        'feature_map_stride': 8,
-          #        'matched_threshold': 0.5,
-          #        'unmatched_threshold': 0.35
-      },
-      {
-        'class_name': 'Cyclist',
-        'mode': 'Range',
-        'anchor_dims': 3,
-        'boxes_size': [ [ 1.76, 0.6, 1.73 ] ], # W L H
-        'rotations': [ 0, 1.57 ],
-        'ratios': [ 1 ],
-        'center_aligned': true,
-        'anchor_bottom_heights': [ -0.6 ],
-        'road_plane_aligned': true,
-        'road_plane_height': -1.2
-          #        'feature_map_stride': 8,
-          #        'matched_threshold': 0.5,
-          #        'unmatched_threshold': 0.35
-      }
-    ]
+    ANCHOR_GENERATOR_CONFIG:
+      NAME: AnchorGenerator
+      DEVICE: cuda
+      CLASS_CONFIG: [
+        {
+          'class_name': Car,
+          'mode': Range,
+          'anchor_dims': 3,
+          'boxes_size': [ [ 3.9, 1.6, 1.56 ] ], # W L H
+          'rotations': [ 0, 1.57 ],
+          'ratios': [ 1 ],
+          'center_aligned': true,
+          'road_plane_aligned': true,
+          'road_plane_height': -1.2
+            #        'anchor_bottom_heights': [ -1.78 ],
+            #        'align_center': False,
+            #        'feature_map_stride': 8,
+            #        'matched_threshold': 0.6,
+            #        'unmatched_threshold': 0.45
+        },
+        {
+          'class_name': 'Pedestrian',
+          'mode': 'Range',
+          'anchor_dims': 3,
+          'boxes_size': [ [ 0.8, 0.6, 1.73 ] ], # W L H
+          'rotations': [ 0, 1.57 ],
+          'ratios': [ 1 ],
+          'center_aligned': true,
+          'road_plane_aligned': true,
+          'road_plane_height': -1.2
+            #        'anchor_bottom_heights': [ -0.6 ]
+            #        'feature_map_stride': 8,
+            #        'matched_threshold': 0.5,
+            #        'unmatched_threshold': 0.35
+        },
+        {
+          'class_name': 'Cyclist',
+          'mode': 'Range',
+          'anchor_dims': 3,
+          'boxes_size': [ [ 1.76, 0.6, 1.73 ] ], # W L H
+          'rotations': [ 0, 1.57 ],
+          'ratios': [ 1 ],
+          'center_aligned': true,
+          'anchor_bottom_heights': [ -0.6 ],
+          'road_plane_aligned': true,
+          'road_plane_height': -1.2
+            #        'feature_map_stride': 8,
+            #        'matched_threshold': 0.5,
+            #        'unmatched_threshold': 0.35
+        }
+      ]
 
     TARGET_ASSIGNER_CONFIG:
-      NAME: AxisAlignedTargetAssigner
+      NAME: 'MaxIouTargetAssigner'
+      DEVICE: cuda
       POS_FRACTION: -1.0
-      SAMPLE_SIZE: 512
       NORM_BY_NUM_EXAMPLES: False
       MATCH_HEIGHT: False
-      BOX_CODER: ResidualCoder
       CLASS_THRESHOLD: [
         { 'class_name': 'Car',
-          'pos_threshold': 0.6,
+          'pos_threshold': 0.5,
           'neg_threshold': 0.45
         },
         {
@@ -109,11 +114,29 @@ MODEL:
           'neg_threshold': 0.35
         }
       ]
+      IOU_CALCULATOR:
+        NAME: 'Iou3DCalculator'
+      BOX_ENCODER:
+        NAME: 'ResidualCoder'
+        code_size: 7
+        encode_angle_by_sincos: False
+
+      SAMPLER:
+        NAME: 'MaxSizeSubSampler'
+        sample_size: 50
 
     LOSS_CONFIG:
+      CLS_LOSS:
+        NAME: 'FocalLoss'
+        gamma: 2
+        alpha: 0.25
+        binary_loss: False
+      REG_LOSS:
+        NAME: 'SmoothL1Loss'
+        beta: 0.5
       LOSS_WEIGHTS: {
         'cls_weight': 1.0,
-        'loc_weight': 2.0,
+        'reg_weight': 2.0,
         'dir_weight': 0.2,
         'code_weights': [ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 ]
       }
