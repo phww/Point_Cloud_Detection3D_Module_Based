@@ -3,7 +3,7 @@ import pickle
 import numpy as np
 
 from ...ops.pc_3rd_ops.iou3d_nms import iou3d_nms_utils
-from ...utils import box_utils
+from ...utils.bbox import box_utils
 
 
 class DataBaseSampler(object):

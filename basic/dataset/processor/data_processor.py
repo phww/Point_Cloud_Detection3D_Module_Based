@@ -3,7 +3,8 @@ from functools import partial
 import numpy as np
 from skimage import transform
 
-from basic.utils import box_utils, common_utils
+from basic.utils import common_utils
+from basic.utils.bbox import box_utils
 
 
 class DataProcessor(object):

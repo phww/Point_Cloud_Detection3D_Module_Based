@@ -1,0 +1,13 @@
+DATASET_CONFIG: "/home/ph/Desktop/PointCloud/utils_my/kitti/cfg/kitti_dataset.yaml"
+CLASS_NAMES: [ 'Car'] # 'Pedestrian', 'Cyclist'
+BATCH: 6
+EPOCHS: 5
+
+MODEL:
+  NAME: SECOND
+  CONFIG: "/home/ph/Desktop/PointCloud/utils_my/basic/model/model_cfg/second.yaml"
+
+OPTIMIZER:
+  NAME: Adam
+  LR: 0.003
+

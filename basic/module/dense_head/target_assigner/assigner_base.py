@@ -10,10 +10,11 @@ from basic.utils.bbox import bbox_sampler, bbox_encoder, iou_calculator
 
 class AssignerBase:
 
-    def __init__(self, assigner_cfg, model_info_dict,**kwargs):
+    def __init__(self, assigner_cfg, model_info_dict, **kwargs):
         self.module_cfg = assigner_cfg
         self.model_info_dict = model_info_dict
         self.device = assigner_cfg.DEVICE
+        self.training = model_info_dict['training']
         self.iou_calculator = self.build_iou_calculator()
         self.bbox_encoder = self.build_box_encoder()
         self.sampler = self.build_sampler()

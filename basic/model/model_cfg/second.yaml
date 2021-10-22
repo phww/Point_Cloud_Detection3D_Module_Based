@@ -1,5 +1,3 @@
-CLASS_NAMES: [ 'Car', 'Pedestrian', 'Cyclist' ]
-
 DATASET_CONFIG:
   CONFIG_PATH: "/home/ph/Desktop/PointCloud/utils_my/kitti/cfg/kitti_dataset.yaml"
 
@@ -33,12 +31,12 @@ MODEL:
 
   DENSE_HEAD:
     NAME: AnchorHead
-    CLASS_AGNOSTIC: False
-
-    USE_DIRECTION_CLASSIFIER: True
-    DIR_OFFSET: 0.78539
-    DIR_LIMIT_OFFSET: 0.0
-    NUM_DIR_BINS: 2
+#    CLASS_AGNOSTIC: False
+#
+#    USE_DIRECTION_CLASSIFIER: True
+#    DIR_OFFSET: 0.78539
+#    DIR_LIMIT_OFFSET: 0.0
+#    NUM_DIR_BINS: 2
 
     ANCHOR_GENERATOR_CONFIG:
       NAME: AnchorGenerator
@@ -70,10 +68,6 @@ MODEL:
           'center_aligned': true,
           'road_plane_aligned': true,
           'road_plane_height': -1.2
-            #        'anchor_bottom_heights': [ -0.6 ]
-            #        'feature_map_stride': 8,
-            #        'matched_threshold': 0.5,
-            #        'unmatched_threshold': 0.35
         },
         {
           'class_name': 'Cyclist',
@@ -86,9 +80,6 @@ MODEL:
           'anchor_bottom_heights': [ -0.6 ],
           'road_plane_aligned': true,
           'road_plane_height': -1.2
-            #        'feature_map_stride': 8,
-            #        'matched_threshold': 0.5,
-            #        'unmatched_threshold': 0.35
         }
       ]
 
@@ -123,17 +114,18 @@ MODEL:
 
       SAMPLER:
         NAME: 'MaxSizeSubSampler'
-        sample_size: 50
+        sample_size: 512
 
     LOSS_CONFIG:
       CLS_LOSS:
         NAME: 'FocalLoss'
         gamma: 2
         alpha: 0.25
-        binary_loss: False
+
       REG_LOSS:
         NAME: 'SmoothL1Loss'
         beta: 0.5
+
       LOSS_WEIGHTS: {
         'cls_weight': 1.0,
         'reg_weight': 2.0,

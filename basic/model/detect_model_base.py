@@ -16,10 +16,11 @@ class Detect3DBase(nn.Module):
         super().__init__()
         self.model_cfg = model_cfg.MODEL
         self.module_names_ordered = [name.lower() for name in list(self.model_cfg.keys())[1:]]
-        self.num_class = len(model_cfg.CLASS_NAMES)
+        self.num_class = len(data_infos['class_names'])
         self.class_names = data_infos['class_names']
         self.model_info_dict = {
             'module_list': [],
+            'training': self.training
         }
         self.model_info_dict.update(data_infos)  # add data infos
         self.register_buffer('global_step', torch.LongTensor(1).zero_())

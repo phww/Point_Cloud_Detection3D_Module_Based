@@ -1,0 +1,9 @@
+DATA_ROOT: '/home/ph/Dataset/KITTI'
+SAVE_ROOT: '/home/ph/Dataset/KITTI/infos'
+WORKER_NUM: 4
+DUMP_INTERVAL: 1000
+
+CREATE_GT_DATABASE: {
+  FLAG: True,
+  USED_CLASSES: [ 'Car','Pedestrian','Cyclist', ]
+}

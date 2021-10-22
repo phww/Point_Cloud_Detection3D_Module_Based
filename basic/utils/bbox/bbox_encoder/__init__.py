@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # _*_ coding: utf-8 _*_
-# @Time : 2021/9/23 下午3:51
+# @Time : 2021/10/8 下午3:59
 # @Author : PH
 # @Version：V 0.1
 # @File : __init__.py.py
 # @desc :
-from .second import SECOND
+from .residual_coder import ResidualCoder
 
-all = {'SECOND': SECOND}
+__all__ = {'ResidualCoder': ResidualCoder}

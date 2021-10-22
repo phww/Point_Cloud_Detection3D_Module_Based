@@ -1,0 +1,66 @@
+#!/usr/bin/env python
+# _*_ coding: utf-8 _*_
+# @Time : 2021/10/8 下午7:04
+# @Author : PH
+# @Version：V 0.1
+# @File : smoothL1_loss.py
+# @desc :
+import torch
+import torch.nn as nn
+
+
+def smooth_l1_loss(diff, beta):
+    # if beat < 1e-5.use L1 loss
+    if beta < 1e-5:
+        loss = torch.abs(diff)
+    else:
+        n = torch.abs(diff)
+        loss = torch.where(n < beta, 0.5 * n ** 2 / beta, n - 0.5 * beta)
+
+    return loss
+
+
+class SmoothL1Loss(nn.Module):
+    """
+    Pytroch also have implement of torch.nn.SmoothL1Loss().See
+    https://pytorch.org/docs/stable/generated/torch.nn.SmoothL1Loss.html?highlight=l1#torch.nn.SmoothL1Loss
+    """
+
+    def __init__(self, beta, reduction='mean', **kwargs):
+        super(SmoothL1Loss, self).__init__()
+        self.beta = beta
+        self.reduction = reduction
+        # self.code_weight = torch.tensor(code_weights, dtype=torch.float) if code_weights is not None else None
+
+    def forward(self, preds, targets):
+        """
+
+        Args:
+            preds: B, N, 7 or N, 7
+            targets: B, N, 7 or N, 7
+            code_weights: weights for code dim
+
+        Returns:
+
+        """
+        assert preds.size() == targets.size()
+        diff = preds - targets
+        loss = smooth_l1_loss(diff, self.beta)
+        # if self.code_weights is not None:
+        #     assert self.code_weights.shape[0] == loss.shape[-1]
+        #     loss = loss * self.code_weights.unsqueeze(-1)
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'none':
+            return loss
+        elif self.reduction == 'sum':
+            return loss.sum()
+
+
+if __name__ == '__main__':
+    preds = torch.randn(100, 7)
+    targets = torch.randn(100, 7)
+    loss_fn = SmoothL1Loss(beta=0.5)
+    print(f"loss:", loss_fn(preds, targets))
+    torch_loss = torch.nn.SmoothL1Loss(beta=0.5)
+    print(f"torch loss:", torch_loss(preds, targets))

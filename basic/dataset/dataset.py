@@ -278,26 +278,12 @@ class DatasetTemplate(Dataset):
         ret['batch_size'] = batch_size
         return ret
 
-    @staticmethod
-    def put_data_to_gpu(batch_dick):
-        for key, value in batch_dick.items():
-            if not isinstance(value, np.ndarray):
-                continue
-            elif key in ['frame_id', 'pts_coord']:
-                continue
-            elif key in ['image_shape']:
-                batch_dick[key] = torch.from_numpy(value).int().cuda()
-            else:
-                batch_dick[key] = torch.from_numpy(value).float().cuda()
-
-        return batch_dick
-
     def get_data_infos(self):
         data_info_dict = {
             'raw_point_feature_dims': self.point_feature_encoder.num_point_features,
             'cur_point_feature_dims': self.point_feature_encoder.num_point_features,
             'point_cloud_range': self.point_cloud_range,
-            'depth_downsample_factor': self.depth_downsample_factor,
+            # 'depth_downsample_factor': self.depth_downsample_factor,
             'voxel_size': self.voxel_size,
             'grid_size': self.grid_size,
             'class_names': self.class_names
