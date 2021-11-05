@@ -32,25 +32,29 @@ class SmoothL1Loss(nn.Module):
         self.reduction = reduction
         # self.code_weight = torch.tensor(code_weights, dtype=torch.float) if code_weights is not None else None
 
-    def forward(self, preds, targets):
+    def forward(self, inputs, targets, weights=None, avg_factor=128):
         """
 
         Args:
-            preds: B, N, 7 or N, 7
+            inputs: B, N, 7 or N, 7
             targets: B, N, 7 or N, 7
             code_weights: weights for code dim
 
         Returns:
 
         """
-        assert preds.size() == targets.size()
-        diff = preds - targets
+        assert inputs.size() == targets.size()
+        diff = inputs - targets
         loss = smooth_l1_loss(diff, self.beta)
         # if self.code_weights is not None:
         #     assert self.code_weights.shape[0] == loss.shape[-1]
         #     loss = loss * self.code_weights.unsqueeze(-1)
+        if weights is not None:
+            assert weights.shape == loss.shape[:2]
+            weights = weights.unsqueeze(dim=2).repeat(1, 1, 7)
+            loss = weights * loss
         if self.reduction == 'mean':
-            return loss.mean()
+            return loss.sum() / avg_factor
         elif self.reduction == 'none':
             return loss
         elif self.reduction == 'sum':
@@ -58,9 +62,13 @@ class SmoothL1Loss(nn.Module):
 
 
 if __name__ == '__main__':
-    preds = torch.randn(100, 7)
+    preds = torch.randn(100, 7, requires_grad=True)
     targets = torch.randn(100, 7)
     loss_fn = SmoothL1Loss(beta=0.5)
-    print(f"loss:", loss_fn(preds, targets))
+    loss = loss_fn(preds, targets)
+    print(f"loss:", loss)
+    print(f"grad:", loss.backward())
+    # print(loss.grad)
     torch_loss = torch.nn.SmoothL1Loss(beta=0.5)
     print(f"torch loss:", torch_loss(preds, targets))
+    print(f"grad:", torch_loss(preds, targets).backward())

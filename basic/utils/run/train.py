@@ -40,8 +40,8 @@ class Trainer(TemplateModel):
     def loss_per_batch(self, batch_dict):
         batch_dict = put_data_to_gpu(batch_dict)
         for cur_model in self.model_list:
-            loss = cur_model(batch_dict)
-        return loss
+            loss_dict = cur_model(batch_dict)
+        return loss_dict
 
     def eval_scores_per_batch(self, batch):
         pass
@@ -106,8 +106,11 @@ class Predictor:
                                              batch_size=batch_size
                                              )
 
-    def predict_bbox(self, data_dict):
-        self.model.eval()
+    def predict_bbox(self, data_dict, eval=True):
+        if eval:
+            self.model.eval()
+        else:
+            self.model.train()
         pred_dict = self.model(data_dict)
         return pred_dict
 

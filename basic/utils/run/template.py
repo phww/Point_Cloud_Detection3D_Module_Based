@@ -61,7 +61,7 @@ class TemplateModel:
         # check_point 目录
         self.ckpt_dir = "./check_point/" + time.strftime("%Y-%m-%d::%H:%M:%S")
 
-    def check_init(self, log_name="log.txt", clean_log=False, arg=None):
+    def check_init(self, log_name="log.txt", clean_log=False, arg=None, use_tb=True):
         # 检测摸板的初始状态，可以在这加上很多在训练之前的操作
         assert isinstance(self.model_list, list)
         assert isinstance(self.optimizer_list, list)
@@ -106,7 +106,8 @@ class TemplateModel:
             arg_dict = arg.__dict__
             for key in arg_dict.keys():
                 print(f"{key}:{arg_dict[key]}")
-
+        if not use_tb:
+            self.writer = None
         # 清空cuda中的cache
         torch.cuda.empty_cache()
 
@@ -165,57 +166,78 @@ class TemplateModel:
         torch.save(all_models, fname)
         print('save model at {}'.format(fname))
 
-    def train_loop(self, write_params=False, clip_grad=True):
+    def train_loop(self, write_params=False, clip_grad=None):
         """训练一个epoch，一般来说不用改"""
         print("*" * 15, f"epoch:{self.epoch}", "*" * 15)
         for model in self.model_list:
             model.train()
 
-        running_loss = 0.0
-        all_avg_loss = 0.0
+        running_tol_loss = 0.0  # total loss used for backward
+        running_loss_dict = None  # other loss only for tensorboard
+        all_avg_loss_dict = None
         cnt_loss = 0
         for step, batch in enumerate(self.train_loader):
             self.global_step += 1
             batch_loss_dict = self.loss_per_batch(batch)
-            batch_loss = batch_loss_dict['loss']
+            batch_tol_loss = batch_loss_dict['tol_loss']
 
             # 多个优化器需要按逆序更新每一个优化器
             for optimizer in reversed(self.optimizer_list):
                 optimizer.zero_grad()
 
-            batch_loss.backward()
+            batch_tol_loss.backward()
 
-            if clip_grad:
+            # 截断太大的梯度
+            if clip_grad is not None:
                 for model in self.model_list:
-                    nn.utils.clip_grad_norm_(model.parameters(), max_norm=20, norm_type=2)
+                    nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_grad, norm_type=2)
 
             for optimizer in reversed(self.optimizer_list):
                 optimizer.step()
-            running_loss += batch_loss.item()
+
+            # 累计running loss
+            if running_loss_dict is None:
+                running_loss_dict = batch_loss_dict
+            else:
+                for loss, value in batch_loss_dict.items():
+                    running_loss_dict[loss] += value
 
             # 记录损失除了训练刚开始时是用此时的loss外，其他都是用一批loss的平均loss
+            # 但是为了tensorboard的曲线好看，不记录第一个样本的loss
             if self.global_step == 1:
-                # 为了tensorboard的曲线好看，不记录这个loss
                 # if self.writer is not None:
-                #     self.writer.add_scalar('train_loss', batch_loss.item(), self.global_step)
-                print(f"loss:{batch_loss.item() : .5f}\t"
+                #     self.writer.add_scalar('train_loss', batch_loss.item(), self.global_step):
+                print(f"loss:{batch_tol_loss.item() : .5f}\t"
                       f"cur:[{step * self.train_loader.batch_size}]\[{len(self.train_loader.dataset)}]"
                       )
 
             # 打印self.log_per_step批数据的的平均loss
             elif (step + 1) % self.log_per_step == 0:
-                avg_loss = running_loss / (self.log_per_step * len(batch))
-                print(f"loss:{avg_loss : .5f}\t"
-                      f"cur:[{(step + 1) * self.train_loader.batch_size}]\[{len(self.train_loader.dataset)}]"
-                      )
-                all_avg_loss += avg_loss
+                avg_loss_dict = {}
+                for loss, value in running_loss_dict.items():
+                    avg_loss_dict[loss] = value / (self.log_per_step * len(batch))
+                for avg_loss, value in avg_loss_dict.items():
+                    print(f"{avg_loss}:{value : .5f}\t"
+                          f"cur:[{(step + 1) * self.train_loader.batch_size}]\[{len(self.train_loader.dataset)}]"
+                          )
+
+                if all_avg_loss_dict is None:
+                    all_avg_loss_dict = running_loss_dict
+                else:
+                    for loss, value in running_loss_dict.items():
+                        all_avg_loss_dict[loss] += value
+
                 cnt_loss += 1
-                running_loss = 0.0
+                for loss, value in running_loss_dict.items():
+                    running_loss_dict[loss] = 0.0  # running loss 归零.用于累计下N批次数据的loss
 
                 # Tensorboard记录
                 if self.writer is not None:
                     # 平均loss
-                    self.writer.add_scalar('train_loss', avg_loss, self.global_step)
+                    if len(avg_loss_dict) == 1:
+                        self.writer.add_scalar('train_loss', avg_loss_dict['tol_loss'], self.global_step)
+                    else:
+                        self.writer.add_scalars('train_loss', avg_loss_dict, self.global_step)
 
                     # write_params=True在Tensorboard中记录模型的参数和梯度的分布情况，但是也费时间。默认关闭
                     if write_params:
@@ -227,10 +249,13 @@ class TemplateModel:
                                     self.writer.add_histogram('grads/' + tag, value.grad.data.cpu().numpy())
 
         # 一个epoch，训练集的全部样本的平均loss
-        avg_batch_loss = all_avg_loss / cnt_loss
-        print(f"epoch:{self.epoch}\tavg_epoch_loss:{avg_batch_loss:.5f}")
+        avg_batch_loss_dict = {}
+        for loss, value in all_avg_loss_dict.items():
+            avg_batch_loss_dict[loss] = value / cnt_loss
+        for loss, value in avg_batch_loss_dict.items():
+            print(f"epoch:{self.epoch}\tavg_epoch_{loss}:{value:.5f}")
         if self.writer is not None:
-            self.writer.add_scalars("avg_epoch_loss", {"train": avg_batch_loss}, self.epoch)
+            self.writer.add_scalars("avg_epoch_loss", {"train": avg_batch_loss_dict["tol_loss"]}, self.epoch)
 
     def loss_per_batch(self, batch):
         """

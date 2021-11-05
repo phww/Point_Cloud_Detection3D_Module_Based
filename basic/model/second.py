@@ -5,7 +5,10 @@
 # @Version：V 0.1
 # @File : second.py
 # @desc :
+import torch
+from basic.utils.nms_utils import class_agnostic_nms
 from .detect_model_base import Detect3DBase
+from ..ops.pc_3rd_ops.roiaware_pool3d import roiaware_pool3d_utils
 
 
 class SECOND(Detect3DBase):
@@ -19,26 +22,24 @@ class SECOND(Detect3DBase):
             batch_dict = cur_module(batch_dict)
 
         if self.training:
-            loss = self.get_training_loss(batch_dict)
-
-            ret_dict = {
-                'loss': loss
-            }
-            return ret_dict
+            loss_dict = self.get_training_loss(batch_dict)
+            return loss_dict
         else:
-            pred_bbox = batch_dict['pred_bbox']
-            pred_bbox_labels = batch_dict['pred_bbox_labels']
-            frame_inds = batch_dict['frame_inds']
+            # pred_bbox = batch_dict['pred_bbox']
+            # pred_bbox_labels = batch_dict['pred_bbox_labels']
+            # frame_inds = batch_dict['frame_inds']
+            # self.post_processing(batch_dict)
+
             return batch_dict
 
     def get_training_loss(self, batch_dict):
         disp_dict = {}
 
-        loss_rpn = self.dense_head.calc_loss(batch_dict)
+        loss_dict = self.dense_head.calc_loss(batch_dict)
         # tb_dict = {
         #     'loss_rpn': loss_rpn.item(),
         #     **tb_dict
         # }
 
-        loss = loss_rpn
+        loss = loss_dict
         return loss

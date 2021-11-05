@@ -51,7 +51,7 @@ MODEL:
           'ratios': [ 1 ],
           'center_aligned': true,
           'road_plane_aligned': true,
-          'road_plane_height': -1.2
+          'road_plane_height': -0.035
             #        'anchor_bottom_heights': [ -1.78 ],
             #        'align_center': False,
             #        'feature_map_stride': 8,
@@ -86,13 +86,14 @@ MODEL:
     TARGET_ASSIGNER_CONFIG:
       NAME: 'MaxIouTargetAssigner'
       DEVICE: cuda
+      FORCE_MATCH: True
       POS_FRACTION: -1.0
       NORM_BY_NUM_EXAMPLES: False
       MATCH_HEIGHT: False
       CLASS_THRESHOLD: [
         { 'class_name': 'Car',
-          'pos_threshold': 0.5,
-          'neg_threshold': 0.45
+          'pos_threshold': 0.55,
+          'neg_threshold': 0.4
         },
         {
           'class_name': 'Pedestrian',
@@ -107,6 +108,7 @@ MODEL:
       ]
       IOU_CALCULATOR:
         NAME: 'Iou3DCalculator'
+
       BOX_ENCODER:
         NAME: 'ResidualCoder'
         code_size: 7
@@ -114,13 +116,13 @@ MODEL:
 
       SAMPLER:
         NAME: 'MaxSizeSubSampler'
-        sample_size: 512
+        sample_size: 150
 
     LOSS_CONFIG:
       CLS_LOSS:
         NAME: 'FocalLoss'
         gamma: 2
-        alpha: 0.25
+        alpha: 0.85
 
       REG_LOSS:
         NAME: 'SmoothL1Loss'

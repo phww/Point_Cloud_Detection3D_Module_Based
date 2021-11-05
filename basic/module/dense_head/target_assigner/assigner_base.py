@@ -40,4 +40,5 @@ class AssignerBase:
         if cfg is None:
             return None
         sampler = bbox_sampler.__all__[cfg.NAME](**cfg)
+        self.model_info_dict['sample_size'] = cfg.sample_size
         return sampler

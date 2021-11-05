@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # _*_ coding: utf-8 _*_
-# @Time : 2021/9/27 下午2:11
+# @Time : 2021/11/2 下午1:51
 # @Author : PH
 # @Version：V 0.1
 # @File : anchor_head_base.py
@@ -38,7 +38,7 @@ class AnchorHeadBase(nn.Module):
         self.model_info_dict['anchors'] = anchors
         if self.training:
             # 3.during training, assign target for sampled anchor
-            output_dict = self.train_assign(anchors, cls_pred, reg_pred, gts, gt_labels)
+            output_dict = self.train_assign(anchors, cls_pred, reg_pred, gt_labels, gts)
             return output_dict
         else:
             # 3.during predicting, figure out the foregrounds
@@ -50,7 +50,7 @@ class AnchorHeadBase(nn.Module):
         input_channels = self.model_info_dict['cur_point_feature_dims']
         num_anchors_per_localization = self.anchor_generator.num_anchors_per_localization
         num_anchors_dims = self.anchor_generator.ndim
-        num_class = len(self.model_info_dict['class_names']) + 1 # foreground + background(0)
+        num_class = len(self.model_info_dict['class_names']) + 1  # foreground + background(0)
         cls_layer = nn.Conv2d(input_channels, num_class * num_anchors_per_localization, kernel_size=(1, 1))
         reg_layer = nn.Conv2d(input_channels, num_anchors_dims * num_anchors_per_localization, kernel_size=(1, 1))
         return cls_layer, reg_layer
@@ -58,24 +58,14 @@ class AnchorHeadBase(nn.Module):
     def calc_loss(self, output_dict):
         cls_pred = output_dict['cls_pred']
         reg_pred = output_dict['reg_pred']
-        assign_result = output_dict['assign_result']
-        cls_loss = self.cls_loss_fn(inputs=cls_pred,
-                                    targets=assign_result.cls_targets,
-                                    weights=assign_result.cls_weights,
-                                    avg_factor=self.model_info_dict['sample_size']
-                                    )
-        # cls_loss = loss.focal_loss.py_sigmoid_focal_loss(pred=cls_pred,
-        #                                                  target=assign_result.cls_targets,
-        #                                                  weights=assign_result.cls_weights,
-        #                                                  avg_factor=self.model_info_dict['sample_size'])
+        target_dict = output_dict['target_dict']
+        # ce = nn.CrossEntropyLoss()
+        # cls_loss = ce(cls_pred, target_dict['cls_labels'].long())
+        cls_loss = self.cls_loss_fn(cls_pred, target_dict['cls_labels'])
         # if no positive bbox, reg_loss = 0
         reg_loss = 0.
-        if assign_result.bbox_targets is not None:
-            reg_loss = self.reg_loss_fn(inputs=reg_pred,
-                                        targets=assign_result.bbox_targets,
-                                        weights=assign_result.bbox_weights,
-                                        avg_factor=self.model_info_dict['sample_size']
-                                        )
+        if reg_pred is not None:
+            reg_loss = self.reg_loss_fn(reg_pred, target_dict['reg_labels'])
         weights_dict = self.module_cfg.LOSS_CONFIG.LOSS_WEIGHTS
         tol_loss = cls_loss * weights_dict['cls_weight'] + reg_loss * weights_dict['reg_weight']
         loss_dict = {
@@ -83,22 +73,33 @@ class AnchorHeadBase(nn.Module):
             "cls_loss": cls_loss,
             "reg_loss": reg_loss
         }
-
         return loss_dict
 
     def train_assign(self, anchors, cls_pred, reg_pred, gts, gt_labels):
-        num_class = len(self.model_info_dict['class_names']) + 1
-        bbox_dim = self.anchor_generator.ndim
-        B = cls_pred.size(0)
-        cls_pred = cls_pred.permute(0, 2, 3, 1).reshape(B, -1, num_class)
-        reg_pred = reg_pred.permute(0, 2, 3, 1).reshape(B, -1, bbox_dim)
         if gt_labels is None:
             gt_labels = gts[..., -1]  # gts:B,N,7+class
             gts = gts[..., :-1]
-        assign_result = self.target_assigner.assign(gts, anchors, gt_labels)
+        target_dict, batch_bbox_ids_dict = self.target_assigner.assign(gts, anchors, gt_labels)
+        self.model_info_dict['batch_bbox_ids_dict'] = batch_bbox_ids_dict
+        cls_pred_neg = None
+        cls_pred_pos = None
+        sampled_reg_pred = None
+        if batch_bbox_ids_dict['pos'] is not None:
+            cls_pred_pos = self.pred_map_sampling(cls_pred,
+                                                  batch_bbox_ids_dict['pos']
+                                                  )
+        if batch_bbox_ids_dict['neg'] is not None:
+            cls_pred_neg = self.pred_map_sampling(cls_pred,
+                                                  batch_bbox_ids_dict['neg'],
+                                                  )
+        if batch_bbox_ids_dict['pos'] is not None:
+            sampled_reg_pred = self.pred_map_sampling(reg_pred,
+                                                      batch_bbox_ids_dict['pos'],
+                                                      )
+        sampled_cls_pred = torch.cat([cls_pred_neg, cls_pred_pos], dim=0) if cls_pred_pos is not None else cls_pred_neg
         output_dict = {
-            'cls_pred'     : cls_pred,
-            'reg_pred'     : reg_pred,
+            'cls_pred'   : sampled_cls_pred,
+            'reg_pred'   : sampled_reg_pred,
             'assign_result': assign_result
         }
         return output_dict
@@ -119,8 +120,8 @@ class AnchorHeadBase(nn.Module):
         B = cls_pred.size(0)
         num_anchors = anchors.size(0)
         # B, C*A, H, W -> B, H, W, C*A -> B, num_anchors, C
-        cls_pred = cls_pred.permute(0, 2, 3, 1).contiguous().view(B, num_anchors, -1)
-        reg_pred = reg_pred.permute(0, 2, 3, 1).contiguous().view(B, num_anchors, -1)
+        cls_pred = cls_pred.permute(0, 2, 3, 1).reshape(B, num_anchors, -1)
+        reg_pred = reg_pred.permute(0, 2, 3, 1).reshape(B, num_anchors, -1)
         batch_anchors = anchors.unsqueeze(dim=0).repeat(B, 1, 1)  # B, num_anchors, 7
         pred_bboxes = self.target_assigner.bbox_encoder.decode(reg_pred, batch_anchors)
         # pred_bboxes = batch_anchors
@@ -129,7 +130,7 @@ class AnchorHeadBase(nn.Module):
 
     def predict_proposals_one_frame(self, scores, bboxes, k):
         assert 0 < k < scores.size(0)
-        max_scores, argmax_scores = scores[:, 1:].max(dim=-1)
+        max_scores, _ = scores[:, 1:].max(dim=-1)
         _, topk_inds = max_scores.topk(k)
         topk_bboxes = bboxes[topk_inds]
         topk_scores = scores[topk_inds]

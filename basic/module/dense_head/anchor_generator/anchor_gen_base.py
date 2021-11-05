@@ -8,8 +8,7 @@
 import easydict
 import numpy as np
 import torch
-
-
+import einops
 # todo: base anchor generator 、2d anchor
 # help fun
 def _add_size_info(anchors_without_size, sizes):
@@ -110,11 +109,11 @@ class AnchorGenerator:
         elif self.mode == 'Range':
             anchors = self._gen_anchor_range()
             if flatten_output:
-                anchors = anchors.view(-1, self.ndim).contiguous()
+                anchors = anchors.view(-1, self.ndim)
         elif self.mode == 'Stride':
             anchors = self._gen_anchor_stride()
             if flatten_output:
-                anchors = anchors.view(-1, self.ndim).contiguous()
+                anchors = anchors.view(-1, self.ndim)
         else:
             raise ValueError("Unsupported Mode!")
         return anchors.to(self.device)
