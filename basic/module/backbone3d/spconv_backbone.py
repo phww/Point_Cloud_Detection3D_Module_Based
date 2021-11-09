@@ -34,6 +34,26 @@ def post_act_block(in_channels, out_channels, kernel_size, indice_key=None, stri
     return m
 
 
+def base_block(in_channel, encoder_channel, encoder_padding, norm_fn, idx):
+    # 一层稀疏卷积+两层流形卷积
+    blocks = nn.ModuleList()
+    blocks.append(post_act_block(in_channel, encoder_channel[0], 3, norm_fn=norm_fn, stride=2,
+                                padding=encoder_padding[0], indice_key=f'spconv{idx}', conv_type='spconv'
+                                )
+                 )
+    blocks.append(
+            post_act_block(encoder_channel[0], encoder_channel[1], 3, norm_fn=norm_fn, padding=encoder_padding[1],
+                           indice_key=f'subm{idx}'
+                           )
+    )
+    blocks.append(
+            post_act_block(encoder_channel[1], encoder_channel[2], 3, norm_fn=norm_fn, padding=encoder_padding[2],
+                           indice_key=f'subm{idx}'
+                           )
+    )
+    return blocks
+
+
 class SparseBasicBlock(spconv.SparseModule):
     expansion = 1
 
@@ -73,82 +93,57 @@ class SparseBasicBlock(spconv.SparseModule):
         return out
 
 
-class VoxelBackBone8x(VoxelBackBone3D):
+class VoxelBackBone8x(nn.Module):
 
-    def __init__(self, module_cfg, model_info_dict):
-        super(VoxelBackBone8x, self).__init__(module_cfg, model_info_dict)
-        self.module_cfg = module_cfg
+    def __init__(self, model_info_dict,
+                 in_channels,
+                 base_channels=16,
+                 output_channels=128,
+                 encoder_channels=((16,), (32, 32, 32), (64, 64, 64), (64, 64, 64)),
+                 encoder_paddings=((1,), (1, 1, 1), (1, 1, 1), ((0, 1, 1), 1, 1)),
+                 last_pad=None,
+                 **kwargs,
+                 ):
+        super(VoxelBackBone8x, self).__init__()
         # BN
+        self.model_info_dict = model_info_dict
+        self.input_channels = in_channels
         norm_fn = partial(nn.BatchNorm1d, eps=1e-3, momentum=0.01)
-
-        self.sparse_shape = model_info_dict['grid_size'][::-1] + [1, 0, 0]
+        self.sparse_shape = model_info_dict['grid_size'][::-1] + [1, 0, 0]  # 41, 1600, 1408 in kitti
         self.conv_input = spconv.SparseSequential(
-                spconv.SubMConv3d(self.input_channels, 16, 3, padding=1, bias=False, indice_key='subm1'),
-                norm_fn(16),
+                spconv.SubMConv3d(self.input_channels, base_channels, 3,
+                                  padding=1, bias=False, indice_key='subm1'
+                                  ),
+                norm_fn(base_channels),
                 nn.ReLU(),
         )
-        block = post_act_block
-
-        self.conv1 = spconv.SparseSequential(
-                block(16, 16, 3, norm_fn=norm_fn, padding=1, indice_key='subm1'),
-        )
-        # 一层稀疏卷积+两层流形卷积
-        self.conv2 = spconv.SparseSequential(
-                # [1600, 1408, 41] <- [800, 704, 21]
-                block(16, 32, 3, norm_fn=norm_fn, stride=2, padding=1, indice_key='spconv2', conv_type='spconv'),
-                block(32, 32, 3, norm_fn=norm_fn, padding=1, indice_key='subm2'),
-                block(32, 32, 3, norm_fn=norm_fn, padding=1, indice_key='subm2'),
-        )
-
-        self.conv3 = spconv.SparseSequential(
-                # [800, 704, 21] <- [400, 352, 11]
-                block(32, 64, 3, norm_fn=norm_fn, stride=2, padding=1, indice_key='spconv3', conv_type='spconv'),
-                block(64, 64, 3, norm_fn=norm_fn, padding=1, indice_key='subm3'),
-                block(64, 64, 3, norm_fn=norm_fn, padding=1, indice_key='subm3'),
-        )
-
-        self.conv4 = spconv.SparseSequential(
-                # [400, 352, 11] <- [200, 176, 5]
-                block(64, 64, 3, norm_fn=norm_fn, stride=2, padding=(0, 1, 1), indice_key='spconv4', conv_type='spconv'
-                      ),
-                block(64, 64, 3, norm_fn=norm_fn, padding=1, indice_key='subm4'),
-                block(64, 64, 3, norm_fn=norm_fn, padding=1, indice_key='subm4'),
-        )
-
-        last_pad = 0
-        last_pad = self.module_cfg.get('last_pad', last_pad)
+        # conv_layers
+        self.conv_layers = nn.ModuleList()
+        self.conv_layers.append(post_act_block(base_channels, encoder_channels[0][0], 3, norm_fn=norm_fn,
+                                               padding=encoder_paddings[0][0], indice_key='subm1'
+                                               )
+                                )
+        # conv2 ~ 4
+        in_c = encoder_channels[0][0]
+        idx = 2
+        for out_channels, padding in zip(encoder_channels[1:], encoder_paddings[1:]):
+            self.conv_layers.extend(base_block(in_c, out_channels, padding, norm_fn=norm_fn, idx=idx))
+            in_c = out_channels[-1]
+            idx += 1
+        self.last_pad = 0 if last_pad is None else last_pad
         self.conv_out = spconv.SparseSequential(
-                # [200, 150, 5] -> [200, 150, 2]
-                spconv.SparseConv3d(64, 128, (3, 1, 1), stride=(2, 1, 1), padding=last_pad,
+                spconv.SparseConv3d(in_c, output_channels, (3, 1, 1), stride=(2, 1, 1),
+                                    padding=self.last_pad,
                                     bias=False, indice_key='spconv_down2'
                                     ),
-                norm_fn(128),
+                norm_fn(output_channels),
                 nn.ReLU(),
         )
-        # some module infos
-        self.num_point_features = 128
-        self.backbone_channels = {
-            'x_conv1': 16,
-            'x_conv2': 32,
-            'x_conv3': 64,
-            'x_conv4': 64
-        }
-        self.down_sample_rate = module_cfg.DOWN_SAMPLE_RATE
 
-    @property
-    def output_feature_dims(self):
-        return self.num_point_features
-
-    @property
-    def output_feature_size(self):
-        feature_map_size = self.grid_size[::-1] // self.down_sample_rate
-        feature_map_size[0] = 2
-        return feature_map_size
-
-    def forward(self, batch_dict):
+    def forward(self, data_dict):
         """
         Args:
-            batch_dict:
+            voxel_feat:
                 batch_size: int
                 vfe_features: (num_voxels, C)
                 voxel_coords: (num_voxels, 4), [batch_idx, z_idx, y_idx, x_idx]
@@ -156,51 +151,27 @@ class VoxelBackBone8x(VoxelBackBone3D):
             batch_dict:
                 encoded_spconv_tensor: sparse tensor
         """
-        voxel_features, voxel_coords = batch_dict['voxel_features'], batch_dict['voxel_coords']
-        batch_size = batch_dict['batch_size']
+        voxel_features, voxel_coords = data_dict['voxel_features'], data_dict['voxel_coords']
+        batch_size = data_dict['batch_size']
         input_sp_tensor = spconv.SparseConvTensor(
                 features=voxel_features,
                 indices=voxel_coords.int(),
                 spatial_shape=self.sparse_shape,
                 batch_size=batch_size
         )
-
+        # 41, 1600, 1408
         x = self.conv_input(input_sp_tensor)
-
-        x_conv1 = self.conv1(x)
-        x_conv2 = self.conv2(x_conv1)
-        x_conv3 = self.conv3(x_conv2)
-        x_conv4 = self.conv4(x_conv3)
+        # 21, 800, 704 -> 11, 400, 352 -> 5, 200, 176
+        for conv in self.conv_layers:
+            x = conv(x)
 
         # for detection head
-        # [200, 176, 5] -> [200, 176, 2]
-        out = self.conv_out(x_conv4)
+        # 5, 200, 176 -> 2, 200, 176
+        out = self.conv_out(x)
 
-        batch_dict.update({
-            'encoded_spconv_tensor'       : out,
-            'encoded_spconv_tensor_stride': 8
-        }
-        )
-        batch_dict.update({
-            'multi_scale_3d_features': {
-                'x_conv1': x_conv1,
-                'x_conv2': x_conv2,
-                'x_conv3': x_conv3,
-                'x_conv4': x_conv4,
-            }
-        }
-        )
-        batch_dict.update({
-            'multi_scale_3d_strides': {
-                'x_conv1': 1,
-                'x_conv2': 2,
-                'x_conv3': 4,
-                'x_conv4': 8,
-            }
-        }
-        )
+        data_dict['sp_feat3d'] = out
 
-        return batch_dict
+        return data_dict
 
 
 class VoxelResBackBone8x(VoxelBackBone3D):

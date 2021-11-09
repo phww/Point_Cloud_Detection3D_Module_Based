@@ -22,7 +22,9 @@ from basic.utils.common_utils import put_data_to_gpu
 
 class Trainer(TemplateModel):
 
-    def __init__(self, model_list, opt_list=None, loss_fn=None, train_loader=None, test_loader=None, writer=None):
+    def __init__(self, model_list, opt_list=None, lr_scheduler=None, loss_fn=None, train_loader=None, test_loader=None,
+                 writer=None
+                 ):
         super().__init__()
         self.model_list = model_list  # 模型的list
         self.optimizer_list = opt_list  # 优化器的list
@@ -32,6 +34,7 @@ class Trainer(TemplateModel):
         self.test_loader = test_loader
 
         # 下面的可以不设定
+        self.lr_scheduler_list = lr_scheduler
         # tensorboard
         self.writer = SummaryWriter(log_dir=os.path.join(self.ckpt_dir, 'runs'))  # 推荐设定
         # 训练时print的间隔
@@ -55,11 +58,11 @@ class Trainer(TemplateModel):
         return batch_dict
 
 
-def train(train_cfg):
-    if isinstance(train_cfg, str):
-        train_cfg = cfg_from_yaml_file(train_cfg, merge_subconfig=False)
-    dataset_cfg_path = Path(train_cfg.DATASET_CONFIG)
-    model_cfg = cfg_from_yaml_file(train_cfg.MODEL.CONFIG, merge_subconfig=False)
+def train(model_cfg, state_path=None):
+    if isinstance(model_cfg, str):
+        model_cfg = cfg_from_yaml_file(model_cfg, merge_subconfig=False)
+    dataset_cfg_path = Path(model_cfg.DATASET_CONFIG.CONFIG_PATH)
+    train_cfg = model_cfg.TRAIN_CONFIG
     # dataset
     train_loader = get_dataloader(data_cfg_path=dataset_cfg_path, class_name_list=train_cfg.CLASS_NAMES,
                                   batch_size=train_cfg.BATCH, training=True
@@ -69,31 +72,36 @@ def train(train_cfg):
                                  )
     # model
     data_info = train_loader.dataset.get_data_infos()
-    model_obj = model.all[train_cfg.MODEL.NAME](model_cfg, data_info)
+    model_obj = model.all[model_cfg.MODEL.NAME](model_cfg, data_info)
 
     # optimizer
     lr = train_cfg.OPTIMIZER.LR
-    opt = torch.optim.Adam(model_obj.parameters(), lr=lr)
+    opt = torch.optim.AdamW(model_obj.parameters(), lr=lr, betas=(0.95, 0.99), weight_decay=0.01)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=25, eta_min=0, last_epoch=-1)
 
     # loss
     loss_fn = model_obj.get_training_loss
 
     # Trainer
-    trainer = Trainer([model_obj], [opt], loss_fn, train_loader, test_loader)
+    trainer = Trainer([model_obj], [opt], [scheduler], loss_fn, train_loader, test_loader)
     trainer.check_init()
-    # trainer.print_all_member()
     epochs = train_cfg.EPOCHS
     for epoch in range(epochs):
-        trainer.train_loop()
+        if state_path is not None:
+            trainer.load_state(state_path)
+        trainer.train_loop(clip_grad=train_cfg.GRAD_NORM_CLIP)
+        trainer.epoch += 1
         # trainer.save_state(os.path.join(trainer.ckpt_dir, f"epoch{epoch}.pkl"), False)
-        trainer.save_model(os.path.join(trainer.ckpt_dir, f"epoch{epoch}.pkl"))
+        if (epoch + 1) % 5 == 0:
+            trainer.save_model(os.path.join(trainer.ckpt_dir, f"epoch{epoch}.pkl"))
+            # trainer.save_state(os.path.join(trainer.ckpt_dir, f"epoch{epoch}.pkl"))
 
     # trainer.eval_loop()
 
 
 class Predictor:
 
-    def __init__(self, model_path, class_names, data_cfg_path=None, batch_size=None):
+    def __init__(self, model_path, class_names, data_cfg_path=None, batch_size=None, state_path=None, model_cfg=None):
         with open(model_path, 'rb') as f:
             self.model = torch.load(f)['model0']
         self.class_names = class_names
@@ -167,6 +175,7 @@ class Predictor:
 
 
 if __name__ == '__main__':
-    train_path = "/home/ph/Desktop/PointCloud/utils_my/kitti/cfg/train_cfg.yaml"
+    train_path = "/home/ph/Desktop/PointCloud/utils_my/basic/model/model_cfg/second.yaml"
+    state_path = None
     train_cfg = cfg_from_yaml_file(train_path, False)
-    train(train_cfg)
+    train(train_cfg, state_path)

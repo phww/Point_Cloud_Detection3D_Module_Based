@@ -5,8 +5,8 @@
 # @Version：V 0.1
 # @File : __init__.py.py
 # @desc :
-from .anchor_head.anchor_head_base import AnchorHeadBase
+from .anchor_head.anchor3d_head import Anchor3DHead
 
 __all__ = {
-    'AnchorHead': AnchorHeadBase
+    'Anchor3DHead': Anchor3DHead
 }

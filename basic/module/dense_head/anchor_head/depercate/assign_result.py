@@ -94,18 +94,8 @@ class AssignResult:
         cls_weights = torch.zeros_like(tuples_dense, device=self.device)
         cls_weights[tuples_dense != -100] = 1.0
         return cls_weights
-
     def add_gts(self, gts, gt_labels):
-        num_gt = gts.size(1)
-        self.bbox_targets = torch.cat((self.bbox_targets, gts), dim=1)
-        gt_weights = torch.zeros_like(gt_labels, device=self.device, dtype=torch.float)
-        gt_weights[gt_labels > 0] = 1.0
-        self.bbox_weights = torch.cat((self.bbox_weights, gt_weights), dim=1)
-        self.cls_targets = torch.cat((self.cls_targets, gt_labels), dim=1)
-        gt_weights = torch.zeros_like(gt_labels, device=self.device, dtype=torch.float)
-        gt_weights[gt_labels > 0] = 1.0
-        self.cls_weights = torch.cat((self.cls_weights, gt_weights), dim=1)
-
+        pass
     @property
     def pos_bboxes(self):
         return self.bbox_targets

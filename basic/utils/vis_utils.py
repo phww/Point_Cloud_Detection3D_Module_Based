@@ -190,7 +190,7 @@ class VisualWindow:
 
     def draw_boxes3d(self, boxes, format='center', c='g'):
         if format == 'corner':
-            if boxes.shape[0] != 8:
+            if boxes.shape[1] != 8:
                 boxes = box_utils.boxes_to_corners_3d(boxes)
         for box in boxes:
             self.draw_single_box3d(box, format, c)

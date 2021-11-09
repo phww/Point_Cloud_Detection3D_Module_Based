@@ -10,9 +10,9 @@ import torch.nn as nn
 
 class VFEBase(nn.Module):
 
-    def __init__(self, module_cfg):
+    def __init__(self, model_info_dict):
         super(VFEBase, self).__init__()
-        self.module_cfg = module_cfg
+        self.model_info_dict = model_info_dict
 
     @property
     def output_feature_dims(self):

@@ -56,47 +56,21 @@ class MaxIouTargetAssigner(AssignerBase):
                 pos_gts = gts[pos_tuples[:, 0], pos_tuples[:, 1]]
                 pos_bbox_targets = self.bbox_encoder.encode(boxes=pos_gts, anchors=pos_bboxes)  # num_pos, 7
         return AssignResult(bboxes, gts, gt_labels, pos_bbox_targets, pos_tuples, neg_tuples)
-        # # assign target for batch data
-        # neg_cls_labels = pos_cls_labels = []
-        # neg_batch_bbox_id = None
-        # neg_cls_labels = None
-        # pos_batch_bbox_id = None
-        # pos_cls_labels = None
-        # pos_bboxes = None
-        # reg_labels = None
-        # if neg_tuples is not None:
-        #     neg_batch_bbox_id, neg_cls_labels = self.decode_neg_tuples(neg_tuples)
-        # if pos_tuples is not None:
-        #     pos_batch_bbox_id, pos_cls_labels, pos_bboxes = self.decode_pos_tuples(pos_tuples, bboxes, gt_labels)
-        # cls_labels = torch.cat([neg_cls_labels, pos_cls_labels]) if pos_cls_labels is not None else neg_cls_labels
-        #
-        # if self.bbox_encoder is not None and pos_bboxes is not None:
-        #     pos_gts = gts[pos_tuples[:, 0], pos_tuples[:, 1] - 1]
-        #     reg_labels = self.bbox_encoder.encode(boxes=pos_gts, anchors=pos_bboxes)
-        #
-        # target_dict = {'cls_labels': cls_labels,
-        #                'reg_labels': reg_labels
-        #                }
-        # batch_bbox_id_dict = {
-        #     'pos': pos_batch_bbox_id,
-        #     'neg': neg_batch_bbox_id
-        # }
-        # return target_dict, batch_bbox_id_dict
 
-    def assign_one_frame(self, gts, bboxes, gt_labels, batch_id, **kwargs):
+    def assign_one_frame(self, gt, bboxes, gt_labels, batch_id, **kwargs):
         """
         Use one frame ground truth bbox，assign target for all bboxes
         Args:
-            gts:
+            real_gt:
             bboxes:
-            gt_labels:
+            real_gt_labels:
             **kwargs:
 
         Returns:
 
         """
         # 1. calc iou
-        ious = self.iou_calculator(gts, bboxes)  # num_gt, num_bbox
+        ious = self.iou_calculator(gt, bboxes)  # num_gt, num_bbox
         frame_pos_tuples = []
         frame_neg_tuples = []
         # 2.make (batch gt bbox) id tuples according to ious and threshold
@@ -122,19 +96,6 @@ class MaxIouTargetAssigner(AssignerBase):
         # 3. sampling when training
         if self.sampler is not None:
             frame_pos_tuples, frame_neg_tuples = self.sampler(frame_pos_tuples, frame_neg_tuples)
-        # # 3.assign class labels for every bbox.
-        # cls_labels = bbox_gt_pairs
-        # pos_mask = cls_labels > 1
-        # # convert pos bbox from gt index + 1 to gt labels
-        # cls_labels[pos_mask] = gt_labels[(cls_labels[pos_mask] - 1)].long()
-        #
-        # # 4.assign regression labels for every positive bbox.
-        # reg_labels = bboxes[pos_mask]
-        #
-        # targets_dict = {
-        #     "cls_labels": cls_labels,
-        #     "reg_labels": reg_labels,
-        # }
 
         return frame_pos_tuples, frame_neg_tuples
 
@@ -143,14 +104,15 @@ class MaxIouTargetAssigner(AssignerBase):
         for every bbox,find the GT with maximum iou.and the (GT index +1 ）with bbox IOU maximum
         """
         # for each gt force to find the bbox with maximum iou. Make sure each gt have a corresponding bbox
-        pos_tuples_force = None
-        if self.force_match:
-            max_gt, argmax_gt = ious.max(dim=1)
-            pos_gt_ids = torch.arange(ious.size(0))
-            pos_batch_ids = torch.ones_like(argmax_gt) * batch_id
-            pos_tuples_force = torch.stack([pos_batch_ids.cpu(), pos_gt_ids.cpu(), argmax_gt.cpu()], dim=1).to(
-                    self.device
-            )
+        # pos_tuples_force = None
+        # if self.force_match:
+        #     max_gt, bbox_inds_for_gts = ious.max(dim=1)
+        #     pos_gt_ids = torch.arange(ious.size(0))
+        #     pos_batch_ids = torch.ones_like(bbox_inds_for_gts) * batch_id
+        #     pos_tuples_force = torch.stack([pos_batch_ids.cpu(), pos_gt_ids.cpu(), bbox_inds_for_gts.cpu()],
+        #     dim=1).to(
+        #             self.device
+        #     )
 
         # if i'th bbox maximum iou < neg_threshold,bbox_gt_pairs = (batch_id, -1, i)
         max_bbox, argmax_bbox = ious.max(dim=0)
@@ -169,29 +131,18 @@ class MaxIouTargetAssigner(AssignerBase):
             pos_tuples = torch.stack([pos_batch_ids, pos_gt_ids, pos_bbox_ids], dim=1).to(self.device)
         else:
             pos_tuples = None
-        if pos_tuples_force is not None:
-            # if force match.One bbox in one frame may assigned to different gts.
-            if pos_tuples is None:
-                pos_tuples = pos_tuples_force
-            else:
-                repeat_assign_mask = []
-                pos_bbox_id_force = pos_tuples_force[:, 2]
-                for i, bbox_id in enumerate(pos_bbox_id_force):
-                    if bbox_id not in pos_bbox_ids:
-                        repeat_assign_mask.append(i)
-                pos_tuples = torch.cat((pos_tuples,
-                                        pos_tuples_force[repeat_assign_mask]),
-                                       dim=0
-                                       )
+        # if pos_tuples_force is not None:
+        #     # if force match.One bbox in one frame may assigned to different gts.
+        #     if pos_tuples is None:
+        #         pos_tuples = pos_tuples_force
+        #     else:
+        #         repeat_assign_mask = []
+        #         pos_bbox_id_force = pos_tuples_force[:, 2]
+        #         for i, bbox_id in enumerate(pos_bbox_id_force):
+        #             if bbox_id not in pos_bbox_ids:
+        #                 repeat_assign_mask.append(i)
+        #         pos_tuples = torch.cat((pos_tuples,
+        #                                 pos_tuples_force[repeat_assign_mask]),
+        #                                dim=0
+        #                                )
         return pos_tuples, neg_tuples
-
-    def decode_neg_tuples(self, tuples):
-        neg_batch_bbox_id = torch.unique(tuples[:, [0, 2]], dim=0).to(self.device)  # N*(batch_id, bbox_id)
-        neg_cls_labels = torch.zeros(neg_batch_bbox_id.shape[0], device=self.device)
-        return neg_batch_bbox_id, neg_cls_labels
-
-    def decode_pos_tuples(self, tuples, bboxes, gt_labels):
-        pos_batch_bbox_id = tuples[:, [0, 2]].to(self.device)  # torch.unique(tuples[:, [0, 2]], dim=0).to(self.device)
-        pos_cls_labels = gt_labels[tuples[:, 0], tuples[:, 1] - 1]
-        pos_bboxes = bboxes[tuples[:, 2]]
-        return pos_batch_bbox_id, pos_cls_labels, pos_bboxes

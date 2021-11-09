@@ -8,12 +8,16 @@
 import torch
 
 from basic.ops.pc_3rd_ops.iou3d_nms.iou3d_nms_utils import boxes_iou3d_gpu
+from basic.utils.bbox.box_utils import boxes3d_nearest_bev_iou
 
 
 class Iou3DCalculator:
 
-    def __init__(self, **kwargs):
-        self.calculator = boxes_iou3d_gpu
+    def __init__(self, use_bev_iou=True, **kwargs):
+        if use_bev_iou:
+            self.calculator = boxes3d_nearest_bev_iou
+        else:
+            self.calculator = boxes_iou3d_gpu
 
     def __call__(self, gts, bboxes, **kwargs):
         """

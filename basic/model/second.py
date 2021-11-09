@@ -6,15 +6,15 @@
 # @File : second.py
 # @desc :
 import torch
-from basic.utils.nms_utils import class_agnostic_nms
+# from basic.utils.nms_utils import class_agnostic_nms
 from .detect_model_base import Detect3DBase
 from ..ops.pc_3rd_ops.roiaware_pool3d import roiaware_pool3d_utils
 
 
 class SECOND(Detect3DBase):
 
-    def __init__(self, model_cfg, data_infos):
-        super(SECOND, self).__init__(model_cfg, data_infos)
+    def __init__(self, top_cfg, data_infos):
+        super(SECOND, self).__init__(top_cfg, data_infos)
         self.module_list = self.build_model()
 
     def forward(self, batch_dict):
@@ -33,13 +33,8 @@ class SECOND(Detect3DBase):
             return batch_dict
 
     def get_training_loss(self, batch_dict):
-        disp_dict = {}
-
-        loss_dict = self.dense_head.calc_loss(batch_dict)
-        # tb_dict = {
-        #     'loss_rpn': loss_rpn.item(),
-        #     **tb_dict
-        # }
-
-        loss = loss_dict
-        return loss
+        loss_dict = self.dense_head.calc_loss(cls_pred=batch_dict['cls_pred'],
+                                              reg_pred=batch_dict['reg_pred'],
+                                              assign_result=batch_dict['assign_result']
+                                              )
+        return loss_dict

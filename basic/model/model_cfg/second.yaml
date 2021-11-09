@@ -5,42 +5,54 @@ PERPRO_CONFIG:
   CONFIG_PATH: "/home/ph/Desktop/PointCloud/utils_my/kitti/cfg/preprocess_cfg.yaml"
 
 MODEL:
-  NAME: SECONDNet
+  NAME: SECOND
+
+  VOXELIZE_LAYER:
+    NAME: VoxelLayer
+    point_cloud_range: [0, -40, -3, 70.4, 40, 1]
+    voxel_size: [ 0.05, 0.05, 0.1 ]
+    max_points_pre_voxel: 5
+    max_voxels: {
+      'train': 16000,
+      'test': 40000,
+    }
+    full_mean: False
+    use_lead_xyz: True
 
   FEATURE_EXTRACTOR:
     NAME: MeanVFE
-
+    is_normalize: True
+  
   BACKBONE3D:
     NAME: VoxelBackBone8x
-    DOWN_SAMPLE_RATE: 8
+    in_channels: 4
 
 
   NECK:
     NAME: DimCompression
-    DIM: 2 # B, N, D, H, W
-    OUTPUT_FEATURE_DIMS: 256 # 128 * 2
+    dim: 2 # B, N, D, H, W
 
   BACKBONE2D:
-    NAME: BaseBEVBackbone
+    NAME: SECONDFPN
+    in_channels: [128, 256]
+    upsample_strides: [1, 2]
+    out_channels: [256, 256]
 
-    LAYER_NUMS: [ 5, 5 ]
-    LAYER_STRIDES: [ 1, 2 ]
-    NUM_FILTERS: [ 128, 256 ]
-    UPSAMPLE_STRIDES: [ 1, 2 ]
-    NUM_UPSAMPLE_FILTERS: [ 256, 256 ]
+    MULTI_FEAT_LAYER_CONFIG:
+      in_channels: 256
+      layer_nums: [ 5, 5 ]
+      layer_strides: [ 1, 2 ]
+      out_channels: [ 128, 256 ]
 
   DENSE_HEAD:
-    NAME: AnchorHead
-#    CLASS_AGNOSTIC: False
-#
-#    USE_DIRECTION_CLASSIFIER: True
-#    DIR_OFFSET: 0.78539
-#    DIR_LIMIT_OFFSET: 0.0
-#    NUM_DIR_BINS: 2
-
+    NAME: Anchor3DHead
+    in_channels: 512
+    use_direction_classifier: True
+    
     ANCHOR_GENERATOR_CONFIG:
       NAME: AnchorGenerator
       DEVICE: cuda
+
       CLASS_CONFIG: [
         {
           'class_name': Car,
@@ -92,7 +104,7 @@ MODEL:
       MATCH_HEIGHT: False
       CLASS_THRESHOLD: [
         { 'class_name': 'Car',
-          'pos_threshold': 0.55,
+          'pos_threshold': 0.65,
           'neg_threshold': 0.4
         },
         {
@@ -106,8 +118,10 @@ MODEL:
           'neg_threshold': 0.35
         }
       ]
+
       IOU_CALCULATOR:
         NAME: 'Iou3DCalculator'
+        use_bev_iou: True
 
       BOX_ENCODER:
         NAME: 'ResidualCoder'
@@ -116,17 +130,18 @@ MODEL:
 
       SAMPLER:
         NAME: 'MaxSizeSubSampler'
-        sample_size: 150
+        sample_size: 512
 
     LOSS_CONFIG:
       CLS_LOSS:
         NAME: 'FocalLoss'
+        use_sigmoid: False
         gamma: 2
-        alpha: 0.85
+        alpha: 0.75
 
       REG_LOSS:
         NAME: 'SmoothL1Loss'
-        beta: 0.5
+        beta: 0.2
 
       LOSS_WEIGHTS: {
         'cls_weight': 1.0,
@@ -135,6 +150,32 @@ MODEL:
         'code_weights': [ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 ]
       }
 
+TRAIN_CONFIG:
+  CLASS_NAMES: [ 'Car' ] # 'Pedestrian', 'Cyclist'
+  BATCH: 4
+  EPOCHS: 30
+  GRAD_NORM_CLIP: 10
+
+  OPTIMIZER:
+    NAME: Adam
+    LR: 0.003
+    WEIGHT_DECAY: 0.01
+    MOMENTUM: 0.9
+
+    MOMS: [ 0.95, 0.85 ]
+    PCT_START: 0.4
+    DIV_FACTOR: 10
+    DECAY_STEP_LIST: [ 35, 45 ]
+    LR_DECAY: 0.1
+    LR_CLIP: 0.0000001
+
+    LR_WARMUP: False
+    WARMUP_EPOCH: 1
+
+
+
+INFERENCE_CONFIG:
+  NMS_PRE_NUMS: 100
   POST_PROCESSING:
     RECALL_THRESH_LIST: [ 0.3, 0.5, 0.7 ]
     SCORE_THRESH: 0.1
@@ -150,23 +191,3 @@ MODEL:
       NMS_POST_MAXSIZE: 500
 
 
-OPTIMIZATION:
-  BATCH_SIZE_PER_GPU: 4
-  NUM_EPOCHS: 80
-
-  OPTIMIZER: adam_onecycle
-  LR: 0.003
-  WEIGHT_DECAY: 0.01
-  MOMENTUM: 0.9
-
-  MOMS: [ 0.95, 0.85 ]
-  PCT_START: 0.4
-  DIV_FACTOR: 10
-  DECAY_STEP_LIST: [ 35, 45 ]
-  LR_DECAY: 0.1
-  LR_CLIP: 0.0000001
-
-  LR_WARMUP: False
-  WARMUP_EPOCH: 1
-
-  GRAD_NORM_CLIP: 10

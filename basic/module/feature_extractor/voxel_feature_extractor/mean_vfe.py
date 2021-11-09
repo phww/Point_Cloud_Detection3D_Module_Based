@@ -11,9 +11,9 @@ from .vfe_base import VFEBase
 
 class MeanVFE(VFEBase):
 
-    def __init__(self, module_cfg, model_info_dict, **kwargs):
-        super().__init__(module_cfg=module_cfg)
-        self.model_info_dict = model_info_dict
+    def __init__(self, model_info_dict, is_normalize=True, **kwargs):
+        super().__init__(model_info_dict=model_info_dict)
+        self.is_normalize = is_normalize
 
     @property
     def output_feature_dims(self):
@@ -32,8 +32,9 @@ class MeanVFE(VFEBase):
         """
         voxel_features, voxel_num_points = batch_dict['voxels'], batch_dict['voxel_num_points']
         points_mean = voxel_features[:, :, :].sum(dim=1, keepdim=False)
-        normalizer = torch.clamp_min(voxel_num_points.view(-1, 1), min=1.0).type_as(voxel_features)
-        points_mean = points_mean / normalizer
+        if self.is_normalize:
+            normalizer = torch.clamp_min(voxel_num_points.view(-1, 1), min=1.0).type_as(voxel_features)
+            points_mean = points_mean / normalizer
         batch_dict['voxel_features'] = points_mean.contiguous()
 
         return batch_dict

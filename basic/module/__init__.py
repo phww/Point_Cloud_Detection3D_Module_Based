@@ -9,6 +9,7 @@ from .feature_extractor.voxel_feature_extractor.mean_vfe import MeanVFE
 from .backbone3d.spconv_backbone import VoxelBackBone8x, VoxelResBackBone8x
 
 alternative_module_list = [
+    'voxelize_layer',
     'feature_extractor',
     'backbone3d',
     'neck',

@@ -7,6 +7,8 @@
 # @desc :
 from .VGG_encoder2FPN_decoder import BEVExtractor
 from .base_bev_backbone import BaseBEVBackbone
+from .second_fpn import SECONDFPN
 
 __all__ = {'BEVExtractor': BEVExtractor,
-           'BaseBEVBackbone': BaseBEVBackbone}
+           'BaseBEVBackbone': BaseBEVBackbone,
+           'SECONDFPN': SECONDFPN}

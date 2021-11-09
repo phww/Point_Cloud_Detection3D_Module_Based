@@ -50,7 +50,10 @@ class AnchorHeadBase(nn.Module):
         input_channels = self.model_info_dict['cur_point_feature_dims']
         num_anchors_per_localization = self.anchor_generator.num_anchors_per_localization
         num_anchors_dims = self.anchor_generator.ndim
-        num_class = len(self.model_info_dict['class_names']) + 1  # foreground + background(0)
+        if not self.model_info_dict.get('use_sigmoid', False):
+            num_class = len(self.model_info_dict['class_names']) + 1  # foreground + background(0)
+        else:
+            num_class = 1
         cls_layer = nn.Conv2d(input_channels, num_class * num_anchors_per_localization, kernel_size=(1, 1))
         reg_layer = nn.Conv2d(input_channels, num_anchors_dims * num_anchors_per_localization, kernel_size=(1, 1))
         return cls_layer, reg_layer

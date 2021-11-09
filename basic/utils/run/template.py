@@ -195,6 +195,10 @@ class TemplateModel:
             for optimizer in reversed(self.optimizer_list):
                 optimizer.step()
 
+            for lr_scheduler in reversed(self.lr_scheduler_list):
+                lr_scheduler.step(self.epoch + step / len(self.train_loader))
+
+
             # 累计running loss
             if running_loss_dict is None:
                 running_loss_dict = batch_loss_dict
