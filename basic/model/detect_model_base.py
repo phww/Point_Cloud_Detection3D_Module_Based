@@ -11,23 +11,21 @@ from ..module import voxelize, feature_extractor, roi_head, \
     dense_head, backbone3d, backbone2d, neck, alternative_module_list
 
 
-# from basic.utils.nms_utils import class_agnostic_nms, multi_classes_nms
-
-
 class Detect3DBase(nn.Module):
 
-    def __init__(self, top_cfg, data_infos):
+    def __init__(self, top_cfg):
         super().__init__()
         self.top_cfg = top_cfg
         self.model_cfg = top_cfg.MODEL
         self.module_names_ordered = [name.lower() for name in list(self.model_cfg.keys())[1:]]
-        self.num_class = len(data_infos['class_names'])
-        self.class_names = data_infos['class_names']
+        self.class_names = top_cfg.DATA_INFO.class_names
+        self.num_class = len(self.class_names)
         self.model_info_dict = {
             'module_list': [],
             'training'   : self.training
         }
-        self.model_info_dict.update(data_infos)  # add data infos
+        data_info = top_cfg.DATA_INFO
+        self.model_info_dict.update(data_info)  # add data infos
         self.alternative_module = alternative_module_list
 
     @property
@@ -125,41 +123,54 @@ class Detect3DBase(nn.Module):
 
     #########################################################
     @staticmethod
-    def post_processing(self, proposal_dict, post_cfg=None):
+    def post_processing(batch_dict, gts, gt_labels, post_cfg):
         """
         """
-        from basic.utils.nms_utils import multi_classes_nms, single_class_nms
+        from basic.utils.nms_utils import NMS3D
+        from basic.metric.average_precision import recall_and_precision, voc_ap, mean_ap
 
-        if post_cfg is None:
-            post_process_cfg = self.model_cfg.INFERENCE_CONFIG.POST_PROCESSING
-        else:
-            post_process_cfg = post_cfg
-        nms_cfg = post_process_cfg.get('NMS_CONFIG', None)
+        B = gts.size(0)
+        nms_cfg = post_cfg.get('NMS_CONFIG', None)
+        eval_cfg = post_cfg.get('EVAL_CONFIG', None)
+        frame_ids = batch_dict['frame_id']
+        proposal_dict = batch_dict['proposal_dict']
+
         bboxes = proposal_dict['proposals']
         scores = proposal_dict['proposal_scores']
-
-        final_bboxes, final_scores = [], []
+        final_dict_list = []
+        # 1. DO NMS for raw proposals
         if nms_cfg is not None:
-            for bbox, score in zip(bboxes, scores):
-                if nms_cfg.MULTI_CLASSES_NMS:
-                    selected_inds, selected_scores = multi_classes_nms(cls_scores=score,
-                                                                       box_preds=bbox,
-                                                                       nms_config=nms_cfg,
-                                                                       score_thresh=post_process_cfg.SCORE_THRESH
-                                                                       )
-                else:
-                    selected_inds, selected_scores = single_class_nms(cls_scores=score,
-                                                                      bbox_preds=bbox,
-                                                                      nms_config=nms_cfg,
-                                                                      score_thresh=post_process_cfg.SCORE_THRESH
-                                                                      )
-                selected_bbox = bbox[selected_inds]
-                final_bboxes.append(selected_bbox)
-                final_scores.append(selected_scores)
-            final_bboxes = torch.cat(final_bboxes, dim=0)
-            final_scores = torch.cat(final_scores, dim=0)
-        pred_dict = {
-            'pred_bboxes': final_bboxes,
-            'pred_scores': final_scores
-        }
-        return pred_dict
+            nms = NMS3D(**nms_cfg, confidence_thresh=post_cfg.CONFIDENCE_THRESH)
+            nms_result = nms.multi_classes_nms_for_batch(bbox_scores=scores, bbox_preds=bboxes)
+            for b in range(B):
+                frame_id = frame_ids[b]
+                frame_dict = nms_result[b]
+                frame_dict.update({'frame_id': frame_id})
+
+                # 2. eval after nms
+                eval_dict = {}
+                if eval_cfg is not None:
+                    if frame_dict['bboxes'].shape[0] > 0:
+                        bbox = frame_dict['bboxes']
+                        frame_gts = gts[b, :]
+                        frame_labels = gt_labels[b, :]
+                        real_gts = frame_gts[frame_labels > 0]
+                        recall, prec = recall_and_precision(pred_bboxes=bbox, gts=real_gts,
+                                                            iou_thresh=eval_cfg.IOU_THRESH
+                                                            )
+                        # if 'Recall' in eval_cfg.METRIC_NAMES:
+                        #     eval_dict.update({'Recall': recall})
+                        # if 'Precision' in eval_cfg.METRIC_NAMES:
+                        #     eval_dict.update({'Precision': prec})
+                        if 'AP' in eval_cfg.METRIC_NAMES:
+                            ap = voc_ap(recall, prec)
+                            eval_dict.update({'AP': ap})
+                        if 'MAP' in eval_cfg.METRIC_NAMES:
+                            m_ap = mean_ap(pred_bboxes=bbox, gts=real_gts, iou_threshes=eval_cfg.IOU_THRESHES)
+                            eval_dict.update({'MAP': m_ap})
+                    else:
+                        eval_dict.update({'MAP': 0})  # default key metric is MAP
+                        eval_dict.update({'AP': 0})
+                frame_dict.update({'eval_dict': eval_dict})
+                final_dict_list.append(frame_dict)
+        return final_dict_list

@@ -9,31 +9,6 @@ import numpy as np
 import torch
 
 
-def dense_repr(tuples, raw_size, batch_size, gt_labels=None, defualt_value=-100):
-    """
-    dense representation or [batch, gt, bbox] tuples.
-    Args:
-        tuples: [batch, gt, bbox] tuples
-        raw_size: total num of bbox/anchors
-        batch_size: B
-
-    Returns:
-        dense representation: B, num_bbox
-
-    """
-    if tuples.dtype != torch.long:
-        tuples = tuples.long()
-    # default value is -100
-    dense_ret = torch.ones(batch_size, raw_size, dtype=torch.long, device=tuples.device) * defualt_value
-    ind = (tuples[:, 0], tuples[:, 2])
-
-    val = tuples[:, 1]
-    if gt_labels is not None:
-        val = torch.gather(gt_labels, dim=0, index=tuples[:, :1])
-    torch.index_put_(dense_ret, indices=ind, values=val)
-    return dense_ret
-
-
 class AssignResult:
 
     def __init__(self, bboxes, gts, gt_labels, pos_bbox_targets, pos_tuples, neg_tuples):
@@ -56,12 +31,12 @@ class AssignResult:
 
         self.pos_tuples = pos_tuples
         self.neg_tuples = neg_tuples
-        self.device = pos_tuples.device
+        self.device = gts.device
         self.bboxes = bboxes
         self.batch_size = gts.size(0)
         self.num_bbox = bboxes.size(0)
 
-        self.pos_tuples_dense = dense_repr(pos_tuples, self.num_bbox, self.batch_size)
+        self.pos_tuples_dense = self.dense_repr(pos_tuples)
         # bbox_targets for background is 0 vector.foreground is pos_bbox_targets
         self.bbox_targets = self._get_bbox_targets(pos_bbox_targets)
         # cls_targets of background is 0. foreground is the corresponding gt's label
@@ -74,23 +49,26 @@ class AssignResult:
         self.cls_weights = self._get_cls_weights()
 
     def _get_bbox_targets(self, pos_bbox_targets):
-        if self.pos_tuples is None:
-            return None
         bbox_targets = torch.zeros((self.batch_size, self.num_bbox, 7), device=self.device, dtype=torch.float)
-        ind = torch.where(self.pos_tuples_dense >= 0)
-        torch.index_put_(bbox_targets, indices=ind, values=pos_bbox_targets)
+        if self.pos_tuples is not None:
+            ind = torch.where(self.pos_tuples_dense >= 0)
+            torch.index_put_(bbox_targets, indices=ind, values=pos_bbox_targets)
         return bbox_targets
 
     def _get_cls_targets(self, gt_labels):
         bbox_labels = torch.zeros_like(self.pos_tuples_dense, device=self.device, dtype=torch.long)
-        ind = torch.where(self.pos_tuples_dense >= 0)
-        val = gt_labels[self.pos_tuples[:, 0], self.pos_tuples[:, 1]].long()
-        torch.index_put_(bbox_labels, indices=ind, values=val)
+        if self.pos_tuples is not None:
+            ind = torch.where(self.pos_tuples_dense >= 0)
+            val = gt_labels[self.pos_tuples[:, 0], self.pos_tuples[:, 1]].long()
+            torch.index_put_(bbox_labels, indices=ind, values=val)
         return bbox_labels
 
     def _get_cls_weights(self):
-        tuples = torch.cat([self.pos_tuples, self.neg_tuples], dim=0)
-        tuples_dense = dense_repr(tuples, self.num_bbox, self.batch_size)
+        if self.pos_tuples is not None:
+            tuples = torch.cat([self.pos_tuples, self.neg_tuples], dim=0)
+        else:
+            tuples = self.neg_tuples
+        tuples_dense = self.dense_repr(tuples)
         cls_weights = torch.zeros_like(tuples_dense, device=self.device)
         cls_weights[tuples_dense != -100] = 1.0
         return cls_weights
@@ -105,6 +83,30 @@ class AssignResult:
         gt_weights = torch.zeros_like(gt_labels, device=self.device, dtype=torch.float)
         gt_weights[gt_labels > 0] = 1.0
         self.cls_weights = torch.cat((self.cls_weights, gt_weights), dim=1)
+
+    def dense_repr(self, tuples, gt_labels=None, defualt_value=-100):
+        """
+        dense representation or [batch, gt, bbox] tuples.
+        Args:
+            tuples: [batch, gt, bbox] tuples
+            raw_size: total num of bbox/anchors
+            batch_size: B
+
+        Returns:
+            dense representation: B, num_bbox
+
+        """
+        dense_ret = torch.ones(self.batch_size, self.num_bbox, dtype=torch.long, device=self.device) * defualt_value
+        if tuples is not None:
+            if tuples.dtype != torch.long:
+                tuples = tuples.long()
+            # default value is -100
+            ind = (tuples[:, 0], tuples[:, 2])
+            val = tuples[:, 1]
+            if gt_labels is not None:
+                val = torch.gather(gt_labels, dim=0, index=tuples[:, :1])
+            torch.index_put_(dense_ret, indices=ind, values=val)
+        return dense_ret
 
     @property
     def pos_bboxes(self):

@@ -10,7 +10,7 @@ from pathlib import Path
 import easydict
 import torch
 from torch.utils.tensorboard import SummaryWriter
-
+from basic.dataset.dataset import DatasetTemplate
 import kitti.io.kitti_io
 from basic.utils.run.template import TemplateModel
 from basic import model
@@ -19,11 +19,11 @@ from kitti.kitti_dataset import get_dataloader
 from basic.utils.vis_utils import visualize_one_pc_frame
 from basic.utils.common_utils import put_data_to_gpu
 
-
 class Trainer(TemplateModel):
 
-    def __init__(self, model_list, opt_list=None, lr_scheduler=None, loss_fn=None, train_loader=None, test_loader=None,
-                 writer=None
+    def __init__(self, model_list, opt_list=None, lr_scheduler=None,
+                 lr_scheduler_type=None, loss_fn=None, train_loader=None,
+                 test_loader=None,
                  ):
         super().__init__()
         self.model_list = model_list  # 模型的list
@@ -35,19 +35,50 @@ class Trainer(TemplateModel):
 
         # 下面的可以不设定
         self.lr_scheduler_list = lr_scheduler
+        self.lr_scheduler_type = lr_scheduler_type
         # tensorboard
         self.writer = SummaryWriter(log_dir=os.path.join(self.ckpt_dir, 'runs'))  # 推荐设定
         # 训练时print的间隔
         self.log_per_step = 5  # 推荐按数据集大小设定
 
     def loss_per_batch(self, batch_dict):
+        for model in self.model_list:
+            model.train()
         batch_dict = put_data_to_gpu(batch_dict)
+        loss_dict = batch_dict
         for cur_model in self.model_list:
-            loss_dict = cur_model(batch_dict)
+            loss_dict = cur_model(loss_dict)
         return loss_dict
 
-    def eval_scores_per_batch(self, batch):
-        pass
+    def eval_scores_per_batch(self, batch_dict):
+        for model in self.model_list:
+            model.eval()
+        batch_dict = put_data_to_gpu(batch_dict)
+        pred_dict = batch_dict
+        for cur_model in self.model_list:
+            pred_dict_list = cur_model(pred_dict)
+        scores = self.metric(pred_dict_list)
+        return scores
+
+    def metric(self, pred_dict_list):
+        self.key_metric = "MAP"
+        scores = {}
+        for pred_dict in pred_dict_list:
+            eval_dict = pred_dict['eval_dict']
+            if eval_dict.get('MAP', None) is not None:
+                scores['MAP'] = scores['MAP'] + eval_dict['MAP'] if scores.get('MAP') else eval_dict['MAP']
+            if eval_dict.get('AP', None) is not None:
+                scores['AP'] = scores['AP'] + eval_dict['AP'] \
+                    if scores.get('AP', False) else eval_dict['AP']
+            # if eval_dict.get('Recall', None) is not None:
+            #     scores['Recall'] = scores['Recall'] + eval_dict['Recall'] \
+            #         if scores.get('Recall', False) else eval_dict['Recall']
+            # if eval_dict.get('Precision', None) is not None:
+            #     scores['Precision'] = scores['Precision'] + eval_dict['Precision'] \
+            #         if scores.get('Precision', False) else eval_dict['Precision']
+        for key, value in scores.items():
+            scores[key] /= len(pred_dict_list)
+        return scores
 
     def inference(self, batch_dict):
         batch_dict = put_data_to_gpu(batch_dict)
@@ -58,11 +89,12 @@ class Trainer(TemplateModel):
         return batch_dict
 
 
-def train(model_cfg, state_path=None):
-    if isinstance(model_cfg, str):
-        model_cfg = cfg_from_yaml_file(model_cfg, merge_subconfig=False)
-    dataset_cfg_path = Path(model_cfg.DATASET_CONFIG.CONFIG_PATH)
-    train_cfg = model_cfg.TRAIN_CONFIG
+def train(top_cfg, state_path=None):
+    if isinstance(top_cfg, str):
+        top_cfg = cfg_from_yaml_file(top_cfg, merge_subconfig=False)
+    dataset_cfg_path = Path(top_cfg.DATASET_CONFIG.CONFIG_PATH)
+    model_cfg = top_cfg.MODEL
+    train_cfg = top_cfg.TRAIN_CONFIG
     # dataset
     train_loader = get_dataloader(data_cfg_path=dataset_cfg_path, class_name_list=train_cfg.CLASS_NAMES,
                                   batch_size=train_cfg.BATCH, training=True
@@ -71,46 +103,67 @@ def train(model_cfg, state_path=None):
                                  batch_size=train_cfg.BATCH, training=False
                                  )
     # model
-    data_info = train_loader.dataset.get_data_infos()
-    model_obj = model.all[model_cfg.MODEL.NAME](model_cfg, data_info)
+    model_obj = model.all[model_cfg.NAME](top_cfg)
 
     # optimizer
-    lr = train_cfg.OPTIMIZER.LR
-    opt = torch.optim.AdamW(model_obj.parameters(), lr=lr, betas=(0.95, 0.99), weight_decay=0.01)
+    optim_cfg = train_cfg.OPTIMIZER
+    opt = torch.optim.AdamW(model_obj.parameters(),
+                            lr=optim_cfg.LR,
+                            betas=optim_cfg.BETAS,
+                            weight_decay=optim_cfg.WEIGHT_DECAY,
+                            amsgrad=optim_cfg.AMSGRAD
+                            )
+    # if optim_cfg.WARM_UP:
+    #     warm_up_scheduler = torch.optim.lr_scheduler.StepLR(opt,1,gamma=)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=25, eta_min=0, last_epoch=-1)
-
+    # torch.optim.lr_scheduler.
     # loss
     loss_fn = model_obj.get_training_loss
 
     # Trainer
-    trainer = Trainer([model_obj], [opt], [scheduler], loss_fn, train_loader, test_loader)
+    trainer = Trainer([model_obj], [opt], None, 'loss', loss_fn, train_loader, test_loader)
+    # trainer = Trainer([model_obj], [opt], [scheduler], 'annealing', loss_fn, train_loader, test_loader)
     trainer.check_init()
     epochs = train_cfg.EPOCHS
     for epoch in range(epochs):
         if state_path is not None:
             trainer.load_state(state_path)
         trainer.train_loop(clip_grad=train_cfg.GRAD_NORM_CLIP)
+        trainer.eval_loop(save_per_epochs=train_cfg.SAVE_STATE)
+        trainer.update_lr_scheduler()
         trainer.epoch += 1
+    trainer.print_best_metrics()
+        # trainer.epoch += 1
         # trainer.save_state(os.path.join(trainer.ckpt_dir, f"epoch{epoch}.pkl"), False)
-        if (epoch + 1) % 5 == 0:
-            trainer.save_model(os.path.join(trainer.ckpt_dir, f"epoch{epoch}.pkl"))
-            # trainer.save_state(os.path.join(trainer.ckpt_dir, f"epoch{epoch}.pkl"))
+        # if (epoch + 1) % train_cfg.SAVE_STATE == 0:
+        #     trainer.save_model(os.path.join(trainer.ckpt_dir, f"epoch{epoch}.pkl"))
+        # trainer.save_state(os.path.join(trainer.ckpt_dir, f"epoch{epoch}.pkl"))
 
     # trainer.eval_loop()
 
 
 class Predictor:
 
-    def __init__(self, model_path, class_names, data_cfg_path=None, batch_size=None, state_path=None, model_cfg=None):
-        with open(model_path, 'rb') as f:
-            self.model = torch.load(f)['model0']
-        self.class_names = class_names
+    def __init__(self, detect_obj_type, model_path=None, data_cfg_path=None, batch_size=None, state_path=None, model_cfg=None):
+        self.model = None
+        if state_path is not None and model_cfg is not None:
+            if isinstance(model_cfg, str):
+                model_cfg = cfg_from_yaml_file(model_cfg, merge_subconfig=False)
+            self.model = model.all[model_cfg.MODEL.NAME](model_cfg).cuda()
+            state = torch.load(state_path)
+            self.model.load_state_dict(state['model0'])
+        elif model_path is not None:
+            with open(model_path, 'rb') as f:
+                self.model = torch.load(f)['model0']
+        else:
+            raise ValueError("model_path or (state_path + model_cfg) needed")
+        self.class_names = detect_obj_type
         self.dataloader = None
         if data_cfg_path is not None:
-            assert class_names is not None
+            assert detect_obj_type is not None
             assert batch_size is not None
             self.dataloader = get_dataloader(data_cfg_path=data_cfg_path,
-                                             class_name_list=class_names,
+                                             class_name_list=detect_obj_type,
                                              batch_size=batch_size
                                              )
 

@@ -11,6 +11,7 @@ import pickle
 import numpy as np
 
 from basic.dataset.dataset import DatasetTemplate
+from basic.utils.config_utils import cfg_from_yaml_file
 from basic.utils.common_utils import drop_info_with_name
 from kitti.io.kitti_io import KittiIo
 
@@ -23,11 +24,7 @@ def get_dataloader(data_cfg_path,
                    pin_memory=True,
                    training=True):
     from torch.utils.data import DataLoader
-    from easydict import EasyDict
-    import yaml
-
-    with open(data_cfg_path, "rb") as f:
-        cfg = EasyDict(yaml.load(f))
+    cfg = cfg_from_yaml_file(data_cfg_path, False)
     dataset = KittiDataset(cfg, class_name_list, training=training)
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,

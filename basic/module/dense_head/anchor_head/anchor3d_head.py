@@ -38,7 +38,8 @@ class Anchor3DHead(AnchorHeadBase):
         else:
             # 3.during predicting, figure out the proposals
             proposals = self.predict_proposals(cls_pred, reg_pred, anchors)
-            return proposals
+            batch_dict['proposal_dict'] = proposals
+        return batch_dict
 
     def train_assign(self, anchors, cls_pred, reg_pred, gts, gt_labels):
         if self.model_info_dict['use_sigmoid']:
@@ -64,25 +65,25 @@ class Anchor3DHead(AnchorHeadBase):
     def predict_proposals(self, cls_pred, reg_pred, anchors):
         B = cls_pred.size(0)
         pred_scores, pred_bboxes = self._predict_all_bboxes(cls_pred, reg_pred, anchors)
-        proposals = []
-        proposal_scores = []
-        proposal_labels = []
-        for i in range(B):
-            frame_topk_scores, frame_topk_bboxes, frame_topk_labels = self.predict_proposals_one_frame(
-                    scores=pred_scores[i],
-                    bboxes=pred_bboxes[i],
-                    k=self.top_cfg.INFERENCE_CONFIG.NMS_PRE_NUMS
-            )
-            proposals.append(frame_topk_bboxes)
-            proposal_scores.append(frame_topk_scores)
-            proposal_labels.append(frame_topk_labels)
-        proposals = torch.stack(proposals, dim=0)
-        proposal_scores = torch.stack(proposal_scores, dim=0)
-        proposal_labels = torch.stack(proposal_labels, dim=0)
+        # proposals = []
+        # proposal_scores = []
+        # proposal_labels = []
+        # for i in range(B):
+        #     frame_topk_scores, frame_topk_bboxes, frame_topk_labels = self.predict_proposals_one_frame(
+        #             scores=pred_scores[i],
+        #             bboxes=pred_bboxes[i],
+        #             k=self.top_cfg.INFERENCE_CONFIG.num_topk
+        #     )
+        #     proposals.append(frame_topk_bboxes)
+        #     proposal_scores.append(frame_topk_scores)
+        #     proposal_labels.append(frame_topk_labels)
+        # proposals = torch.stack(proposals, dim=0)
+        # proposal_scores = torch.stack(proposal_scores, dim=0)
+        # proposal_labels = torch.stack(proposal_labels, dim=0)
         proposal_dict = {
-            'proposals'      : proposals,
-            'proposal_scores': proposal_scores,
-            'proposal_labels': proposal_labels
+            'proposals'      : pred_bboxes,
+            'proposal_scores': pred_scores,
+            # 'proposal_labels': proposal_labels
         }
         return proposal_dict
 
@@ -120,7 +121,7 @@ class Anchor3DHead(AnchorHeadBase):
         else:
             max_scores, label = scores[:, 1:].max(dim=-1)
         _, topk_inds = max_scores.topk(k)
-        topk_bboxes = bboxes#[topk_inds]
-        topk_scores = scores#[topk_inds]
+        topk_bboxes = bboxes  # [topk_inds]
+        topk_scores = scores  # [topk_inds]
         topk_labels = label[topk_inds] + 1
         return topk_scores, topk_bboxes, topk_labels

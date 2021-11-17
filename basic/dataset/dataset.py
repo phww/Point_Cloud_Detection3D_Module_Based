@@ -63,16 +63,16 @@ class DatasetTemplate(Dataset):
         self.point_cloud_range = np.array(self.dataset_cfg.POINT_CLOUD_RANGE, dtype=np.float32)
 
         self.point_feature_encoder = PointFeatureEncoder(
-            self.dataset_cfg.POINT_FEATURE_ENCODING,
-            point_cloud_range=self.point_cloud_range
+                self.dataset_cfg.POINT_FEATURE_ENCODING,
+                point_cloud_range=self.point_cloud_range
         )
 
         self.data_augmentor = DataAugmentor(
-            self.root_path, self.dataset_cfg.DATA_AUGMENTOR, self.class_names, logger=self.logger
+                self.root_path, self.dataset_cfg.DATA_AUGMENTOR, self.class_names, logger=self.logger
         ) if self.training else None
 
         self.data_processor = DataProcessor(
-            self.dataset_cfg.DATA_PROCESSOR, point_cloud_range=self.point_cloud_range, training=self.training
+                self.dataset_cfg.DATA_PROCESSOR, point_cloud_range=self.point_cloud_range, training=self.training
         )
 
         self.grid_size = self.data_processor.grid_size
@@ -278,14 +278,12 @@ class DatasetTemplate(Dataset):
         ret['batch_size'] = batch_size
         return ret
 
+    @staticmethod
     def get_data_infos(self):
         data_info_dict = {
             'raw_point_feature_dims': self.point_feature_encoder.num_point_features,
-            'cur_point_feature_dims': self.point_feature_encoder.num_point_features,
-            'point_cloud_range': self.point_cloud_range,
+            'point_cloud_range'     : self.point_cloud_range,
             # 'depth_downsample_factor': self.depth_downsample_factor,
-            'voxel_size': self.voxel_size,
-            'grid_size': self.grid_size,
-            'class_names': self.class_names
+            'class_names'           : self.class_names
         }
         return data_info_dict

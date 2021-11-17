@@ -13,8 +13,8 @@ from ..ops.pc_3rd_ops.roiaware_pool3d import roiaware_pool3d_utils
 
 class SECOND(Detect3DBase):
 
-    def __init__(self, top_cfg, data_infos):
-        super(SECOND, self).__init__(top_cfg, data_infos)
+    def __init__(self, top_cfg):
+        super(SECOND, self).__init__(top_cfg)
         self.module_list = self.build_model()
 
     def forward(self, batch_dict):
@@ -25,12 +25,15 @@ class SECOND(Detect3DBase):
             loss_dict = self.get_training_loss(batch_dict)
             return loss_dict
         else:
-            # pred_bbox = batch_dict['pred_bbox']
-            # pred_bbox_labels = batch_dict['pred_bbox_labels']
-            # frame_inds = batch_dict['frame_inds']
-            # self.post_processing(batch_dict)
-
-            return batch_dict
+            pred_output = batch_dict
+            if self.top_cfg.INFERENCE_CONFIG.get('POST_PROCESSING', None) is not None:
+                frame_dict_list = self.post_processing(batch_dict=batch_dict,
+                                                       gts=batch_dict['gt_boxes'][..., :-1],
+                                                       gt_labels=batch_dict['gt_boxes'][..., -1],
+                                                       post_cfg=self.top_cfg.INFERENCE_CONFIG.POST_PROCESSING
+                                                       )
+                pred_output = frame_dict_list
+            return pred_output
 
     def get_training_loss(self, batch_dict):
         loss_dict = self.dense_head.calc_loss(cls_pred=batch_dict['cls_pred'],

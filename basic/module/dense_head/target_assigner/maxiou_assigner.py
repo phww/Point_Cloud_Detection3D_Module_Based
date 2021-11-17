@@ -45,10 +45,9 @@ class MaxIouTargetAssigner(AssignerBase):
             neg_tuples = torch.cat(neg_tuples).to(self.device) if len(neg_tuples) > 0 else None
 
         # 4. encode positive bbox if needed
-
         pos_bbox_targets = None
-        _, unique_mask = np.unique(pos_tuples[:, (0, 2)].detach().cpu().numpy(), return_index=True, axis=0)
-        pos_tuples = pos_tuples[unique_mask]
+        # _, unique_mask = np.unique(pos_tuples[:, (0, 2)].detach().cpu().numpy(), return_index=True, axis=0)
+        # pos_tuples = pos_tuples[unique_mask]
         if pos_tuples is not None:
             pos_bboxes = bboxes[pos_tuples[:, 2]]
             pos_bbox_targets = pos_bboxes
@@ -86,7 +85,7 @@ class MaxIouTargetAssigner(AssignerBase):
                     cls_pos_tuples, cls_neg_tuples = self.make_batch_gt_bbox_tuples(
                             cls_ious, pos_thr, neg_thr, batch_id
                     )
-                    if cls_pos_tuples.size(0) > 0:
+                    if cls_pos_tuples is not None:
                         frame_pos_tuples.append(cls_pos_tuples)
                     if cls_neg_tuples.size(0) > 0:
                         frame_neg_tuples.append(cls_neg_tuples)
@@ -113,7 +112,8 @@ class MaxIouTargetAssigner(AssignerBase):
         #     dim=1).to(
         #             self.device
         #     )
-
+        pos_tuples = None
+        neg_tuples = None
         # if i'th bbox maximum iou < neg_threshold,bbox_gt_pairs = (batch_id, -1, i)
         max_bbox, argmax_bbox = ious.max(dim=0)
         neg_bbox_ids = torch.where(max_bbox < neg_thr)[0]
@@ -129,8 +129,6 @@ class MaxIouTargetAssigner(AssignerBase):
             pos_batch_ids = torch.ones_like(pos_bbox_ids) * batch_id
             # num_pos*(batch_id, gt_id, bbox_id)
             pos_tuples = torch.stack([pos_batch_ids, pos_gt_ids, pos_bbox_ids], dim=1).to(self.device)
-        else:
-            pos_tuples = None
         # if pos_tuples_force is not None:
         #     # if force match.One bbox in one frame may assigned to different gts.
         #     if pos_tuples is None:

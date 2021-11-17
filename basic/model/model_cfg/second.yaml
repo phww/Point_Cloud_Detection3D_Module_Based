@@ -4,12 +4,16 @@ DATASET_CONFIG:
 PERPRO_CONFIG:
   CONFIG_PATH: "/home/ph/Desktop/PointCloud/utils_my/kitti/cfg/preprocess_cfg.yaml"
 
+DATA_INFO:
+  class_names: ['Car']
+  point_cloud_range: [0, -40, -3, 70.4, 40, 1]
+
 MODEL:
   NAME: SECOND
 
   VOXELIZE_LAYER:
     NAME: VoxelLayer
-    point_cloud_range: [0, -40, -3, 70.4, 40, 1]
+    point_cloud_range: [ 0, -40, -3, 70.4, 40, 1 ]
     voxel_size: [ 0.05, 0.05, 0.1 ]
     max_points_pre_voxel: 5
     max_voxels: {
@@ -34,9 +38,9 @@ MODEL:
 
   BACKBONE2D:
     NAME: SECONDFPN
-    in_channels: [128, 256]
-    upsample_strides: [1, 2]
-    out_channels: [256, 256]
+    in_channels: [ 128, 256 ]
+    upsample_strides: [ 1, 2 ]
+    out_channels: [ 256, 256 ]
 
     MULTI_FEAT_LAYER_CONFIG:
       in_channels: 256
@@ -144,8 +148,8 @@ MODEL:
         beta: 0.2
 
       LOSS_WEIGHTS: {
-        'cls_weight': 1.0,
-        'reg_weight': 2.0,
+        'cls_weight': 2.0,
+        'reg_weight': 1.0,
         'dir_weight': 0.2,
         'code_weights': [ 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 ]
       }
@@ -153,41 +157,46 @@ MODEL:
 TRAIN_CONFIG:
   CLASS_NAMES: [ 'Car' ] # 'Pedestrian', 'Cyclist'
   BATCH: 4
-  EPOCHS: 30
+  EPOCHS: 150
   GRAD_NORM_CLIP: 10
+  SAVE_STATE: 10
 
   OPTIMIZER:
-    NAME: Adam
+    NAME: AdamW
     LR: 0.003
+    BETAS: [0.9, 0.999]
     WEIGHT_DECAY: 0.01
-    MOMENTUM: 0.9
+    AMSGRAD: False
 
-    MOMS: [ 0.95, 0.85 ]
-    PCT_START: 0.4
-    DIV_FACTOR: 10
-    DECAY_STEP_LIST: [ 35, 45 ]
-    LR_DECAY: 0.1
-    LR_CLIP: 0.0000001
+    LR_SCHEDULER:
+#      NMAE: CosineAnnealingLR
+#      T_MAX: 25
+#      ETA_MIN: 0
+#      LAST_EPOCH: -1
 
-    LR_WARMUP: False
+
+    LR_WARMUP: True
+    WARMUP_LR: 0.00001
     WARMUP_EPOCH: 1
 
 
 
 INFERENCE_CONFIG:
-  NMS_PRE_NUMS: 100
   POST_PROCESSING:
-    RECALL_THRESH_LIST: [ 0.3, 0.5, 0.7 ]
-    SCORE_THRESH: 0.1
-    OUTPUT_RAW_SCORE: False
+    CONFIDENCE_THRESH: 0.75
 
-    EVAL_METRIC: kitti
+    EVAL_CONFIG:
+      KEY_METRIC: MAP
+      METRIC_NAMES: ['AP', 'MAP']
+      IOU_THRESH: 0.5
+      IOU_THRESHES: [ 0.5,0.55,0.6,0.7,0.75,0.8,0.85,0.9,0.95]
+      OUTPUT_RAW_SCORE: False
 
     NMS_CONFIG:
-      MULTI_CLASSES_NMS: False
-      NMS_TYPE: nms_gpu
-      NMS_THRESH: 0.01
-      NMS_PRE_MAXSIZE: 4096
-      NMS_POST_MAXSIZE: 500
+      nms_type: nms_gpu
+      nms_thresh: 0.01
+      num_topk: 4096
+      nms_pre_maxsize: 4096
+      nms_post_maxsize: 500
 
 

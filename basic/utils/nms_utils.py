@@ -6,18 +6,21 @@
 # @File : nms_utils.py
 # @desc :
 import torch
-from numpy import indices
-
 from ..ops.pc_3rd_ops.iou3d_nms import iou3d_nms_utils
 
 
 class NMS3D:
 
-    def __init__(self, nms_cfg, scores_thresh=None):
-        self.nms_cfg = nms_cfg
-        self.scores_thr = scores_thresh
+    def __init__(self, nms_type, nms_thresh, nms_pre_maxsize=None,
+                 nms_post_maxsize=None, confidence_thresh=None, **kwargs
+                 ):
+        self.nms_type = nms_type
+        self.nms_thresh = nms_thresh
+        self.k = nms_pre_maxsize
+        self.nms_post_maxsize = nms_post_maxsize
+        self.scores_thr = confidence_thresh
 
-    def single_class_nms(self, cls_scores, bbox_preds):
+    def single_class_nms_for_batch(self, cls_scores, bbox_preds):
         """
 
         Args:
@@ -25,78 +28,125 @@ class NMS3D:
             bbox_preds: B, N, 7 + C
 
         Returns:
-
+            nms_result: M*(frame_ind + bbox(7 + C) + score).
         """
         nms_result = []
         for i, (bbox_pred, cls_score) in enumerate(zip(bbox_preds, cls_scores)):
+            frame_dict = {}
             frame_bbox_pred, frame_cls_score = self._single_class_nms_for_frame(cls_score, bbox_pred)
-            frame_id = torch.ones((frame_cls_score.size(0), 1), dtype=torch.float, device=frame_bbox_pred.device) * i
-            frame_result = torch.cat([frame_id, frame_bbox_pred, frame_cls_score.unsqueeze(dim=1)], dim=1)
-            nms_result.append(frame_result)
-        nms_result = torch.cat(nms_result, dim=0)
+            frame_dict['bboxes'] = frame_bbox_pred
+            frame_dict['scores'] = frame_cls_score
+            nms_result.append(frame_dict)
         return nms_result
 
-    def multi_classes_nms(self, bbox_scores, bbox_preds):
+    def multi_classes_nms_for_batch(self, bbox_scores, bbox_preds):
         """
         Args:
             bbox_scores: (B, N, num_class)
             box_preds: (B, N, 7 + C)
 
         Returns:
-
+            nms_result: M*(frame_ind, bbox(7 + C), score, label)
         """
         B, N, C = bbox_scores.shape[:]
-        pred_scores, pred_labels, pred_boxes = [], [], []
+        nms_result = []
         for c in range(1, C):
-            cls_scores = bbox_scores[:, c]  # B, N
+            cls_scores = bbox_scores[..., c]  # B, N
+            nms_result_cls = self.single_class_nms_for_batch(cls_scores=cls_scores,
+                                                             bbox_preds=bbox_preds
+                                                             )
 
-            selected = []
-            selected_cls_bbox, selected_cls_scores = self.single_class_nms(cls_scores=cls_scores,
-                                                                           bbox_preds=bbox_preds
-                                                                           )
-            pred_scores.append(selected_cls_scores)
-            pred_labels.append(selected_cls_scores.new_ones(len(selected)).long() * c)
-            pred_boxes.append(selected_cls_bbox)
+            for b in range(B):
+                frame_dict = {}
+                nms_result_frame = nms_result_cls[b]
+                cls_labels = torch.ones((nms_result_frame['bboxes'].size(0), 1),
+                                        dtype=torch.float, device=bbox_scores.device
+                                        ) * c
+                if frame_dict.get('bboxes', None) is not None:
+                    frame_dict['bboxes'] = torch.cat([frame_dict['bboxes'], nms_result_frame['bboxes']])
+                else:
+                    frame_dict.update({'bboxes': nms_result_cls[b]['bboxes']})
 
-        pred_scores = torch.cat(pred_scores, dim=0)
-        pred_labels = torch.cat(pred_labels, dim=0)
-        pred_boxes = torch.cat(pred_boxes, dim=0)
+                if frame_dict.get('scores', None) is not None:
+                    frame_dict['scores'] = torch.cat([frame_dict['scores'], nms_result_frame['scores']])
+                else:
+                    frame_dict.update({'scores': nms_result_frame['scores']})
 
-        return pred_scores, pred_labels, pred_boxes
+                if frame_dict.get('labels', None) is not None:
+                    frame_dict['labels'] = torch.cat([frame_dict['labels'], cls_labels])
+                else:
+                    frame_dict.update({'labels': cls_labels})
+                nms_result.append(frame_dict)
+                # nms_result.append(frame_dict)
+            # nms_result_cls = torch.cat((nms_result_cls, cls_labels), dim=-1)  # M*(frame_ind, bbox(7), score, label)
+            # nms_result_dict.update(nms_result_cls)
+            # nms_result_dict.update(cls_labels)
+            # nms_result.append(nms_result_cls)
+        # nms_result = torch.cat(nms_result, dim=0)
+
+        return nms_result
+
+    def multi_classes_nms_for_frame(self, bbox_scores, bbox_pred):
+        """
+
+        Args:
+            bbox_scores: N, num_class
+            bbox_pred: N, 7 + C
+
+        Returns:
+
+        """
+        N, C = bbox_scores.shape[:]
+        final_bboxes, final_scores, final_labels = [], [], []
+        for c in range(1, C):
+            cls_scores = bbox_scores[:, c]  # N,
+            bboxes, scores = self._single_class_nms_for_frame(cls_scores, bbox_pred)
+            labels = torch.ones((bboxes.size(0), 1), dtype=torch.float, device=bbox_scores.device) * c
+            final_bboxes.append(bboxes)
+            final_scores.append(scores)
+            final_labels.append(labels)
+        final_bboxes = torch.cat(final_bboxes, dim=0)
+        final_scores = torch.cat(final_scores, dim=0)
+        final_labels = torch.cat(final_labels, dim=0)
+        nms_result = {"bboxes": final_bboxes,
+                      "scores": final_scores,
+                      "labels": final_labels}
+        return nms_result
 
     def _single_class_nms_for_frame(self, cls_score, bbox_pred):
         """
         DO NMS for single class in one frame
         Args:
-            cls_score: k. topk scores for one class in one frame
-            bbox_pred: k, 7
+            cls_score: N. topk scores for one class in one frame
+            bbox_pred: N, 7
 
         Returns:
 
         """
         # 1. topk scores as k proposals
-        # max_scores, _ = cls_score.max(dim=0)
-        topk_scores, topk_inds = cls_score.topk(min(self.nms_cfg.NMS_PRE_MAXSIZE, cls_score.size(0)))
+        topk_scores, topk_inds = cls_score.topk(min(self.k, cls_score.size(0)))
         topk_bbox = bbox_pred[topk_inds]
+
         # 2. get rid of proposals with low scores
         if self.scores_thr is not None:
             scores_mask = (topk_scores >= self.scores_thr)
             topk_scores = topk_scores[scores_mask]
             topk_bbox = topk_bbox[scores_mask]
 
-        # 2. NMS
+        # 3. DO NMS to figure out candidate index
         selected_inds = []
-        if cls_score.shape[0] > 0:
-            if self.nms_cfg.NMS_TYPE == 'nms_gpu':
+        if topk_scores.shape[0] > 0:
+            if self.nms_type == 'nms_gpu':
                 nms_fun = iou3d_nms_utils.nms_gpu
-            elif self.nms_cfg.NMS_TYPE == 'nms_normal_gpu':
+            elif self.nms_type == 'nms_normal_gpu':
                 nms_fun = iou3d_nms_utils.nms_normal_gpu
             else:
                 raise ValueError('num type not exist!')
-            keep_idx, selected_scores = nms_fun(topk_bbox[:, 0:7],
-                                                topk_scores,
-                                                self.nms_cfg.NMS_THRESH,
-                                                **self.nms_cfg
-                                                )
-            # selected_inds = indices[keep_idx[:self.nms_cfg.NMS_POST_MAXSIZE]]
-        return topk_bbox[keep_idx], topk_scores[keep_idx]
+            selected_inds = nms_fun(topk_bbox[:, 0:7],
+                                    topk_scores,
+                                    self.nms_thresh,
+                                    self.nms_post_maxsize
+                                    )
+            if self.nms_post_maxsize is not None:
+                selected_inds = selected_inds[:self.nms_post_maxsize]
+        return topk_bbox[selected_inds], topk_scores[selected_inds]

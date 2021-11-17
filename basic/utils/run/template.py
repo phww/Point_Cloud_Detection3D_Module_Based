@@ -55,7 +55,8 @@ class TemplateModel:
         self.best_metric = {}
         self.key_metric = None
         self.lr_scheduler_list = None
-        self.lr_scheduler_type = None  # None "metric" "loss"
+        self.lr_scheduler_type = None  # None "metric" "loss" "annealing" "step"
+        self.update_lr_after_train = True  # if False update lr after eval
         # 运行设备
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         # check_point 目录
@@ -71,18 +72,19 @@ class TemplateModel:
         assert self.device
         assert self.ckpt_dir
         assert self.log_per_step
-        assert self.lr_scheduler_type in [None, "metric", "loss"]
+        assert self.lr_scheduler_type in [None, "metric", "loss", "annealing", "step"]
         if not osp.exists(self.ckpt_dir):
             os.makedirs(self.ckpt_dir)
 
         # 设置lr_scheduler
         # 如果以测试集的metric为学习率改变的依据，选择mode="max";以loss为依据，选择mode="min"
-        mode = "max"
+        mode = None
         if self.lr_scheduler_type is not None:
             if self.lr_scheduler_type == "metric":
                 mode = "max"
             elif self.lr_scheduler_type == "loss":
                 mode = "min"
+        if not self.update_lr_after_train and self.lr_scheduler_list is None:
             self.lr_scheduler_list = [torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
                                                                                  mode=mode,
                                                                                  factor=0.1,
@@ -92,6 +94,13 @@ class TemplateModel:
                                                                                  verbose=True
                                                                                  )
                                       for optimizer in self.optimizer_list]
+        else:
+            if self.lr_scheduler_type == 'step':
+                self.lr_scheduler_list = [torch.optim.lr_scheduler.MultiStepLR(optimizer,
+                                                                               milestones=[],
+                                                                               verbose=True
+                                                                               )
+                                          for optimizer in self.optimizer_list]
 
         # 设置log,log保存目录为"self.ckpt_dir/log_name"
         logger = Logger(os.path.join(self.ckpt_dir, log_name))
@@ -195,9 +204,10 @@ class TemplateModel:
             for optimizer in reversed(self.optimizer_list):
                 optimizer.step()
 
-            for lr_scheduler in reversed(self.lr_scheduler_list):
-                lr_scheduler.step(self.epoch + step / len(self.train_loader))
-
+            if self.update_lr_after_train and self.lr_scheduler_list is not None:
+                self.update_lr_scheduler(step=step)
+                # for lr_scheduler in reversed(self.lr_scheduler_list):
+                #     lr_scheduler.step(self.epoch + step / len(self.train_loader))
 
             # 累计running loss
             if running_loss_dict is None:
@@ -226,16 +236,16 @@ class TemplateModel:
                           )
 
                 if all_avg_loss_dict is None:
-                    all_avg_loss_dict = running_loss_dict
+                    all_avg_loss_dict = avg_loss_dict
                 else:
-                    for loss, value in running_loss_dict.items():
+                    for loss, value in avg_loss_dict.items():
                         all_avg_loss_dict[loss] += value
 
                 cnt_loss += 1
                 for loss, value in running_loss_dict.items():
                     running_loss_dict[loss] = 0.0  # running loss 归零.用于累计下N批次数据的loss
 
-                # Tensorboard记录
+                # Tensorboard记录self.log_per_step批数据的的平均loss
                 if self.writer is not None:
                     # 平均loss
                     if len(avg_loss_dict) == 1:
@@ -258,48 +268,64 @@ class TemplateModel:
             avg_batch_loss_dict[loss] = value / cnt_loss
         for loss, value in avg_batch_loss_dict.items():
             print(f"epoch:{self.epoch}\tavg_epoch_{loss}:{value:.5f}")
-        if self.writer is not None:
-            self.writer.add_scalars("avg_epoch_loss", {"train": avg_batch_loss_dict["tol_loss"]}, self.epoch)
 
-    def loss_per_batch(self, batch):
+        # Tensorboard记录一个epoch的平均loss
+        if self.writer is not None:
+            if len(avg_batch_loss_dict) == 1:
+                self.writer.add_scalar("avg_epoch_train_loss",
+                                       avg_batch_loss_dict['tol_loss'],
+                                       self.epoch
+                                       )
+            else:
+                self.writer.add_scalars("avg_epoch_train_loss", avg_batch_loss_dict, self.epoch)
+            # 用于观测模型是否过拟合/欠拟合
+            self.writer.add_scalars("avg_epoch_train&eval_loss",
+                                    {"train": avg_batch_loss_dict["tol_loss"]},
+                                    self.epoch)
+        # self.epoch += 1
+
+    def loss_per_batch(self, **kwargs):
         """
         计算数据集的一个batch的loss，这个部分是可能要按需求修改的部分
         Pytorch 中的loss函数中一般规定x和y都是float，而有些loss函数规定y要为long（比如经常用到的CrossEntropyLoss）
         如果官网：https://pytorch.org/docs/stable/nn.html#loss-functions 对y的数据类型有要求请做相应的修改
         这里除了CrossEntropyLoss将y的数据类型设为long外， 其他都默认x和y的数据类型为float
         """
-        x, y = batch
-        x = x.to(self.device, dtype=torch.float)
-
-        # 标签y的数据类型
-        y_dtype = torch.float
-        if isinstance(self.criterion, torch.nn.CrossEntropyLoss):
-            y_dtype = torch.long
-
-        # 保证标签y至少是个列向量，即shape "B, 1"
-        if y.dim == 1:
-            y = y.unsqueeze(dim=1).to(self.device, dtype=y_dtype)
-        else:
-            y = y.to(self.device, dtype=y_dtype)
-
-        # 若模型的输入不是一个tensor，按需求改
-        pred = x
-        for model in self.model_list:
-            pred = model(pred)
-        loss = self.criterion(pred, y)
-        return loss
+        raise NotImplementedError
+        # x, y = batch
+        # x = x.to(self.device, dtype=torch.float)
+        #
+        # # 标签y的数据类型
+        # y_dtype = torch.float
+        # if isinstance(self.criterion, torch.nn.CrossEntropyLoss):
+        #     y_dtype = torch.long
+        #
+        # # 保证标签y至少是个列向量，即shape "B, 1"
+        # if y.dim == 1:
+        #     y = y.unsqueeze(dim=1).to(self.device, dtype=y_dtype)
+        # else:
+        #     y = y.to(self.device, dtype=y_dtype)
+        #
+        # # 若模型的输入不是一个tensor，按需求改
+        # pred = x
+        # for model in self.model_list:
+        #     pred = model(pred)
+        # loss = self.criterion(pred, y)
+        # return loss
 
     def eval_loop(self, save_per_epochs=1):
         """一个epoch的评估。一般不用改"""
         print("-" * 15, "Evaluation", "-" * 15)
         # 在整个测试集上做评估，使用分批次的metric的平均值表示训练集整体的metric
         with torch.no_grad():
-            for model in self.model_list:
-                model.eval()
-
+            # for model in self.model_list:
+            #     model.eval()
             # 验证时的loss
-            running_loss = 0.0
-            all_avg_loss = 0.0
+            # 累计running loss
+            # running_tol_loss = 0.0
+            running_loss_dict = None
+            # all_avg_loss = 0.0
+            all_avg_loss_dict = None
             # 保存各种metric的得分
             scores = {}
             cnt = 0
@@ -309,19 +335,40 @@ class TemplateModel:
                 self.global_step_eval += 1
 
                 # 计算评估时多个批次的平均loss
-                batch_loss = self.loss_per_batch(batch)
-                running_loss += batch_loss.item()
+                batch_loss_dict = self.loss_per_batch(batch)
+                # 累计running loss
+                if running_loss_dict is None:
+                    running_loss_dict = batch_loss_dict
+                else:
+                    for loss, value in batch_loss_dict.items():
+                        running_loss_dict[loss] += value
+
                 # 每self.log_per_step个step打印信息
                 if (step + 1) % self.log_per_step == 0:
-                    avg_loss = running_loss / (self.log_per_step * len(batch))
-                    if self.writer is not None:
-                        self.writer.add_scalar('eval_loss', avg_loss, self.global_step_eval)
-                    print(f"loss:{avg_loss : .5f}\t"
-                          f"cur:[{(step + 1) * self.test_loader.batch_size}]\[{len(self.test_loader.dataset)}]"
-                          )
-                    all_avg_loss += avg_loss
+                    avg_loss_dict = {}
+                    for loss, value in running_loss_dict.items():
+                        avg_loss_dict[loss] = value / (self.log_per_step * len(batch))
+                    for avg_loss, value in avg_loss_dict.items():
+                        print(f"{avg_loss}:{value : .5f}\t"
+                              f"cur:[{(step + 1) * self.test_loader.batch_size}]\[{len(self.test_loader.dataset)}]"
+                              )
+
+                    if all_avg_loss_dict is None:
+                        all_avg_loss_dict = avg_loss_dict
+                    else:
+                        for loss, value in avg_loss_dict.items():
+                            all_avg_loss_dict[loss] += value
+
                     cnt_loss += 1
-                    running_loss = 0.0
+                    for loss, value in running_loss_dict.items():
+                        running_loss_dict[loss] = 0.0  # running loss 归零.用于累计下N批次数据的loss
+
+                    if self.writer is not None:
+                        # 平均loss
+                        if len(avg_loss_dict) == 1:
+                            self.writer.add_scalar('eval_loss', avg_loss_dict['tol_loss'], self.global_step_eval)
+                        else:
+                            self.writer.add_scalars('eval_loss', avg_loss_dict, self.global_step_eval)
 
                 # 分批计算metric
                 if step == 0:
@@ -335,12 +382,30 @@ class TemplateModel:
                         scores[key] += batch_scores[key]
                 if self.global_step_eval == 1:
                     self.best_metric = scores  # 第一次eval时，初始化self.best_metric
-
+                    # avg_tol_loss = running_tol_loss / (self.log_per_step * len(batch))
+                    # if self.writer is not None:
+                    #     self.writer.add_scalar('eval_loss', avg_tol_loss, self.global_step_eval)
+                    # print(f"loss:{avg_tol_loss : .5f}\t"
+                    #       f"cur:[{(step + 1) * self.test_loader.batch_size}]\[{len(self.test_loader.dataset)}]"
+                    #       )
+                    # all_avg_loss += avg_tol_loss
+                    # cnt_loss += 1
+                    # running_tol_loss = 0.0
             # 整个测试集上的平均running_loss
-            avg_batch_loss = all_avg_loss / cnt_loss
+            # avg_batch_loss = all_avg_loss / cnt_loss
+            avg_batch_loss_dict = {}
+            for loss, value in all_avg_loss_dict.items():
+                avg_batch_loss_dict[loss] = value / cnt_loss
+            for loss, value in avg_batch_loss_dict.items():
+                print(f"epoch:{self.epoch}\tavg_epoch_{loss}:{value:.5f}")
             # 整个测试集上的平均metric
             for key in scores.keys():
                 scores[key] /= cnt
+            # 打印信息:一个epoch上的平均loss和关键指标
+            for avg_loss, value in avg_batch_loss_dict.items():
+                print(f"epoch:{self.epoch}\tavg_epoch_eval_{avg_loss}:{value:.5f}")
+            for avg_metric, value in scores.items():
+                print(f'epoch:{self.epoch}\tavg_metric_{avg_metric}:{value:.5f}')
 
             # 根据scores[self.key_metric]来判定是否保存最佳模型.
             # self.key_metric需要在metric函数中初始化，分类任务常用self.key_metric = "acc"
@@ -357,46 +422,79 @@ class TemplateModel:
             if self.epoch % save_per_epochs == 0:
                 self.save_state(osp.join(self.ckpt_dir, f'epoch{self.epoch}.pth'))
 
-            # 打印信息:一个epoch上的平均loss和关键指标
-            print(f"epoch:{self.epoch}\tavg_epoch_loss:{avg_batch_loss:.5f}")
-            print(f'epoch:{self.epoch}\t{self.key_metric}:{scores[self.key_metric]:.5f}')
-
             # Tensorboard
             if self.writer is not None:
                 # 记录每个epoch的metric
-                for key in scores.keys():
-                    self.writer.add_scalar(f"eval_{key}", scores[key], self.epoch)
+                # for key in scores.keys():
+                self.writer.add_scalars(f"eval_metric", scores, self.epoch)
 
                 # 记录一个epoch中验证集中全部样本的平均loss
-                self.writer.add_scalars("avg_epoch_loss", {"eval": avg_batch_loss}, self.epoch)
+                if len(avg_batch_loss_dict) == 1:
+                    self.writer.add_scalar("avg_epoch_eval_loss",
+                                           avg_batch_loss_dict['tol_loss'],
+                                           self.epoch
+                                           )
+                else:
+                    self.writer.add_scalars("avg_epoch_eval_loss", avg_batch_loss_dict, self.epoch)
+                self.writer.add_scalars("avg_epoch_train&eval_loss",
+                                        {"eval": avg_batch_loss_dict['tol_loss']},
+                                        self.epoch)
+                # # 记录lr_scheduler中学习率的变化情况
+                # if self.lr_scheduler_list is not None:
+                #     for i, lr_scheduler in enumerate(self.lr_scheduler_list):
+                #         self.writer.add_scalar(f"lr_scheduler{i}",
+                #                                self.optimizer_list[i].param_groups[0]["lr"],
+                #                                self.epoch
+                #                                )
+                #         if self.lr_scheduler_type == "metric":
+                #             lr_scheduler.step(scores[self.key_metric])
+                #         elif self.lr_scheduler_type == "loss":
+                #             lr_scheduler.step(avg_batch_loss)
 
-                # 记录lr_scheduler中学习率的变化情况
-                if self.lr_scheduler_list is not None:
-                    for i, lr_scheduler in enumerate(self.lr_scheduler_list):
-                        self.writer.add_scalar(f"lr_scheduler{i}",
-                                               self.optimizer_list[i].param_groups[0]["lr"],
-                                               self.epoch
-                                               )
-                        if self.lr_scheduler_type == "metric":
-                            lr_scheduler.step(scores[self.key_metric])
-                        elif self.lr_scheduler_type == "loss":
-                            lr_scheduler.step(avg_batch_loss)
-            self.epoch += 1
+            if not self.update_lr_after_train and self.lr_scheduler_list is not None:
+                self.update_lr_scheduler(avg_batch_loss=avg_batch_loss_dict['tol_loss'],
+                                         key_metric=scores[self.key_metric]
+                                         )
+            # self.epoch += 1
         return scores[self.key_metric]
 
+    def update_lr_scheduler(self, **kwargs):
+        if self.update_lr_after_train:
+            if self.lr_scheduler_type in ["annealing", "step"]:
+                if self.lr_scheduler_type == 'annealing':
+                    for lr_scheduler in self.lr_scheduler_list:
+                        lr_scheduler.step(self.epoch + kwargs['step'] / len(self.train_loader))
+                if self.lr_scheduler_type == 'step':
+                    for lr_scheduler in self.lr_scheduler_list:
+                        lr_scheduler.step()
+        else:
+            if self.lr_scheduler_type in ["metric", "loss"]:
+                for i, lr_scheduler in enumerate(self.lr_scheduler_list):
+                    if self.lr_scheduler_type == "metric":
+                        lr_scheduler.step(kwargs['key_metric'])
+                    elif self.lr_scheduler_type == "loss":
+                        lr_scheduler.step(kwargs['avg_batch_loss'])
+        if self.writer is not None:
+            for i, lr_scheduler in enumerate(self.lr_scheduler_list):
+                self.writer.add_scalar(f"lr_scheduler{i}",
+                                       self.optimizer_list[i].param_groups[0]["lr"],
+                                       self.epoch
+                                       )
+
     # 以下eval_scores_per_batch()和metric()，有时要按需求修改
-    def eval_scores_per_batch(self, batch):
-        x, y = batch
-        x = x.to(self.device)
-        y = y.to(self.device)
+    def eval_scores_per_batch(self, **kwargs):
+        raise NotImplementedError
+        # x, y = batch
+        # x = x.to(self.device)
+        # y = y.to(self.device)
+        #
+        # pred = x
+        # for model in self.model_list:
+        #     pred = model(pred)
+        # scores_pre_batch = self.metric(pred, y)
+        # return scores_pre_batch
 
-        pred = x
-        for model in self.model_list:
-            pred = model(pred)
-        scores_pre_batch = self.metric(pred, y)
-        return scores_pre_batch
-
-    def metric(self, pred, y):
+    def metric(self, **kwargs):
         """
         不同任务的性能指标太难统一了，这里只是实现了多分类任务求准确率的方法。其他任务请按需求继承
         这个类的时候再重载这个metric函数，注意返回数据类型为字典,且一定要有self.key_metric这个
@@ -415,13 +513,14 @@ class TemplateModel:
                 各种性能指标的字典，务必要有scores[self.key_metric]
 
         """
-        # 初始化self.key_metric
-        self.key_metric = "acc"
-
-        scores = {}
-        correct = (torch.argmax(pred, dim=1) == y).type(torch.float).sum().item()
-        scores[self.key_metric] = correct / self.test_loader.batch_size
-        return scores
+        raise NotImplementedError
+        # # 初始化self.key_metric
+        # self.key_metric = "acc"
+        #
+        # scores = {}
+        # correct = (torch.argmax(pred, dim=1) == y).type(torch.float).sum().item()
+        # scores[self.key_metric] = correct / self.test_loader.batch_size
+        # return scores
 
     # 有时要按需求修改
     def inference(self, x):
@@ -446,10 +545,12 @@ class TemplateModel:
         return num
 
     def print_best_metrics(self):
+        print(f"Bast Metric")
         for key in self.best_metric.keys():
             print(f"{key}:\t{self.best_metric[key]}")
 
     def print_final_lr(self):
+        print("Final Learning Rate:")
         for i, optimizer in enumerate(self.optimizer_list):
             print(f"final_lr_{i}:{optimizer.param_groups[0]['lr']}")
 
